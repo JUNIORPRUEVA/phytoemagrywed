@@ -22,6 +22,13 @@ class UsuariosScreen extends StatefulWidget {
 class _UsuariosScreenState extends State<UsuariosScreen> {
   /// Cambiar la clave obliga a `RemoteListScreen` a volver a pedir la lista.
   int _reload = 0;
+  final _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
 
   Future<void> _createUser() async {
     final form = await showNewUserDialog(context);
@@ -36,7 +43,11 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
 
   Future<void> _editUser(Map<String, dynamic> user) async {
     final repository = CrmScope.of(context, listen: false).repository;
-    final form = await showEditUserDialog(context, user: user, repository: repository);
+    final form = await showEditUserDialog(
+      context,
+      user: user,
+      repository: repository,
+    );
     if (form == null || !mounted) return;
     final saved = await saveUserEdit(
       context,
@@ -53,62 +64,234 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     final p = context.crm;
     final canCreate = state.session.can('admin.full');
 
-    return RemoteListScreen(
+    if (!canCreate) {
+      return const Center(
+        child: Text('Usuarios está disponible para administración.'),
+      );
+    }
+    return RemoteLoader<List<Map<String, dynamic>>>(
       key: ValueKey(_reload),
-      title: 'Usuarios',
-      subtitle: 'Quién entra al CRM y con qué rol',
       load: state.repository.users,
-      icon: Icons.group_add_outlined,
-      emptyTitle: 'Sin usuarios',
-      emptyMessage: 'El panel todavía no tiene usuarios con cuenta propia.',
-      header: (context, rows) => SectionCard(
-        title: 'Resumen',
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+      builder: (context, rows, reload) {
+        final query = _search.text.trim().toLowerCase();
+        final filtered = rows
+            .where(
+              (row) =>
+                  query.isEmpty ||
+                  '${str(row['display_name'])} ${str(row['username'])} ${str(row['role'])} ${str(row['personal_phone'])}'
+                      .toLowerCase()
+                      .contains(query),
+            )
+            .toList();
+        return Column(
           children: [
-            for (final role in const ['ADMIN', 'AGENT', 'DELIVERY', 'SUPPLIER'])
-              Builder(builder: (context) {
-                final count = rows.where((row) => str(row['role']).toUpperCase() == role).length;
-                if (count == 0) return const SizedBox.shrink();
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Row(
-                    children: [
-                      StatusPill(label: role.toLowerCase(), dense: true),
-                      const SizedBox(width: 10),
-                      Text('$count usuario(s)', style: TextStyle(fontSize: 12.5, color: p.ink)),
-                    ],
-                  ),
-                );
-              }),
-            if (canCreate) ...[
-              const SizedBox(height: 10),
-              CrmButton(
-                label: 'Nuevo usuario',
-                icon: Icons.person_add_alt_1_outlined,
-                expand: true,
-                onPressed: _createUser,
+            Container(
+              height: 48,
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              decoration: BoxDecoration(
+                color: p.surface,
+                border: Border(bottom: BorderSide(color: p.border)),
               ),
-            ],
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Usuarios',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                        color: p.ink,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${rows.length} cuentas',
+                    style: TextStyle(fontSize: 11.5, color: p.inkSecondary),
+                  ),
+                  const SizedBox(width: 10),
+                  IconButton(
+                    tooltip: 'Actualizar',
+                    onPressed: reload,
+                    icon: const Icon(Icons.refresh_rounded, size: 19),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, limits) => ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+                  children: [
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 900),
+                        child: Column(
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: SizedBox(
+                                    height: 39,
+                                    child: TextField(
+                                      controller: _search,
+                                      onChanged: (_) => setState(() {}),
+                                      decoration: const InputDecoration(
+                                        isDense: true,
+                                        prefixIcon: Icon(
+                                          Icons.search_rounded,
+                                          size: 18,
+                                        ),
+                                        hintText:
+                                            'Buscar por nombre, usuario o rol',
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                FilledButton.icon(
+                                  onPressed: _createUser,
+                                  icon: const Icon(
+                                    Icons.person_add_alt_1_outlined,
+                                    size: 17,
+                                  ),
+                                  label: const Text('Nuevo usuario'),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            if (filtered.isEmpty)
+                              Padding(
+                                padding: const EdgeInsets.all(25),
+                                child: Text(
+                                  query.isEmpty
+                                      ? 'Aún no hay usuarios.'
+                                      : 'No hay resultados.',
+                                  style: TextStyle(color: p.inkSecondary),
+                                ),
+                              )
+                            else
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: p.surface,
+                                  border: Border.all(color: p.border),
+                                  borderRadius: BorderRadius.circular(9),
+                                ),
+                                child: Column(
+                                  children: [
+                                    for (
+                                      var i = 0;
+                                      i < filtered.length;
+                                      i++
+                                    ) ...[
+                                      if (i > 0)
+                                        Divider(
+                                          height: 1,
+                                          indent: 50,
+                                          color: p.border,
+                                        ),
+                                      _UserRow(
+                                        row: filtered[i],
+                                        onTap: () => _editUser(filtered[i]),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _UserRow extends StatelessWidget {
+  const _UserRow({required this.row, required this.onTap});
+  final Map<String, dynamic> row;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) {
+    final p = context.crm;
+    final name = str(row['display_name'], str(row['username'], 'Usuario'));
+    final active = boolv(row['active'], true);
+    final phone = str(row['personal_phone'], str(row['fleet_phone']));
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        child: Row(
+          children: [
+            CrmAvatar(label: name, size: 33),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: p.ink,
+                    ),
+                  ),
+                  Text(
+                    [
+                      str(row['username']),
+                      if (phone.isNotEmpty) phone,
+                    ].join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11.5, color: p.inkSecondary),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 90,
+              child: Text(
+                str(row['role'], 'AGENT').toLowerCase(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11.5, color: p.inkSecondary),
+              ),
+            ),
+            if (MediaQuery.sizeOf(context).width > 900)
+              SizedBox(
+                width: 115,
+                child: Text(
+                  str(row['last_login_at']).isEmpty
+                      ? 'Sin acceso'
+                      : CrmFormat.ago(row['last_login_at']),
+                  style: TextStyle(fontSize: 11, color: p.inkSecondary),
+                ),
+              ),
+            SizedBox(
+              width: 73,
+              child: Text(
+                active ? 'Activo' : 'Inactivo',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: active ? p.success : p.inkSecondary,
+                ),
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded, size: 17, color: p.inkSecondary),
           ],
         ),
       ),
-      itemBuilder: (context, row) {
-        final name = str(row['display_name'], str(row['username'], 'Usuario'));
-        final active = boolv(row['active'], true);
-        return CrmListTile(
-          title: name,
-          subtitle: [
-            str(row['username']),
-            str(row['role'], 'AGENT').toLowerCase(),
-            if (boolv(row['must_change_password'])) 'debe cambiar la contraseña',
-            if (str(row['last_login_at']).isNotEmpty) 'entró ${CrmFormat.ago(row['last_login_at'])}',
-          ].join(' · '),
-          leading: CrmAvatar(label: name),
-          trailing: StatusPill(label: active ? 'activo' : 'inactivo', dense: true, color: active ? p.success : p.inkSecondary),
-          onTap: canCreate ? () => _editUser(row) : null,
-        );
-      },
     );
   }
 }

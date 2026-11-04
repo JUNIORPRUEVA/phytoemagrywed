@@ -4,6 +4,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {startCrmServer} from '../server/crm-server.mjs';
+import {computeCourierCompensation} from '../server/courier-compensation.mjs';
 const IMAGE='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWMI7VgV2rGKAUIBACl+Bh2rITjYAAAAAElFTkSuQmCC';
 let app,dir,admin,alice,bob,product,cfg,now,route,capacity;
 async function api(url,{method='GET',body,cookie=admin,origin}={}){const r=await fetch(app.url+url,{method,headers:{...(cookie?{cookie}:{}),...(body?{'content-type':'application/json'}:{}),...(origin?{origin}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,data:await r.json(),cookie:r.headers.get('set-cookie')?.split(';')[0]};}
@@ -18,14 +19,56 @@ beforeEach(async()=>{
  expect((await api(`/api/admin/store/products/${product.id}/publication`,{method:'POST',body:{status:'published'}})).status).toBe(200);
  alice=await account('8095550801');bob=await account('8095550802');expect(alice.status).toBe(201);expect(bob.status).toBe(201);
  cfg=(await api('/api/admin/store/commerce/config')).data.config;
- cfg={...cfg,expectedVersion:cfg.version,defaultOriginId:'origin_uat',cashOnDelivery:true,branches:[{id:'branch_uat',name:'Sucursal UAT',active:true}],origins:[{id:'origin_uat',branchId:'branch_uat',city:'Ciudad UAT A',address:'Origen de prueba',latitude:18.6,longitude:-68.7,active:true,delivery:true,pickup:true}],zones:[{id:'zone_uat',name:'Polígono sintético UAT',active:true,originIds:['origin_uat'],polygon:[[-68.8,18.5],[-68.5,18.5],[-68.5,18.8],[-68.8,18.8],[-68.8,18.5]],hours:Array.from({length:7},(_,day)=>({day,startMinute:0,endMinute:1440}))}],offers:[],banks:[{id:'bank_uat',name:'Banco UAT ficticio',holder:'Solo pruebas',account:'NO-REAL-ACCOUNT',active:true}]};
+ expect(cfg.policy).toBeNull();
+ cfg={...cfg,expectedVersion:cfg.version,policy:{minimumFeeDop:100,firstMeters:1000,firstFeeDop:100,incrementMeters:500,incrementFeeDop:50,maxMeters:15000,active:true},defaultOriginId:'origin_uat',cashOnDelivery:true,branches:[{id:'branch_uat',name:'Sucursal UAT',active:true}],origins:[{id:'origin_uat',branchId:'branch_uat',city:'Ciudad UAT A',address:'Origen de prueba',latitude:18.6,longitude:-68.7,active:true,delivery:true,pickup:true}],zones:[{id:'zone_uat',name:'Polígono sintético UAT',active:true,originIds:['origin_uat'],polygon:[[-68.8,18.5],[-68.5,18.5],[-68.5,18.8],[-68.8,18.8],[-68.8,18.5]],hours:Array.from({length:7},(_,day)=>({day,startMinute:0,endMinute:1440}))}],offers:[],banks:[{id:'bank_uat',name:'Banco UAT ficticio',holder:'Solo pruebas',account:'NO-REAL-ACCOUNT',active:true}]};
  expect((await api('/api/admin/store/commerce/config',{method:'PUT',body:cfg})).status).toBe(200);
 });
 afterEach(async()=>{await app?.close();rmSync(dir,{recursive:true,force:true});});
+it('requires an explicit delivery tariff before producing an automatic customer charge',async()=>{
+ cfg.expectedVersion=1;cfg.policy=null;
+ expect((await api('/api/admin/store/commerce/config',{method:'PUT',body:cfg})).status).toBe(200);
+ const q=await quote();
+ expect(q.data.quote).toMatchObject({status:'manual_quote_required',deliveryFeeCents:null,totalCents:null});
+ expect(q.data.quote.reasons).toContain('delivery_policy_unconfigured');
+});
+it('uses the company delivery rule in the PWA and invalidates an old quote when the rule changes',async()=>{
+ const policy={active:true,mode:'per_km',max_meters:15000,minimum_cents:0,base_cents:5000,per_km_cents:2000};
+ const saved=await api('/api/admin/delivery-rules/customer',{method:'POST',body:{company_id:'fulltech',policy}});
+ expect(saved.status,JSON.stringify(saved.data)).toBe(200);
+ const first=(await quote()).data.quote;
+ expect(first).toMatchObject({status:'priced',deliveryFeeCents:26580,totalCents:126580,
+   deliveryPolicyId:saved.data.policy.id});
+ const updated=await api('/api/admin/delivery-rules/customer',{method:'POST',body:{company_id:'fulltech',policy:{...policy,per_km_cents:3000}}});
+ expect(updated.status).toBe(200);
+ const stale=await api('/api/store/orders',{method:'POST',cookie:alice.cookie,body:{...draft(),quoteId:first.id,requestKey:'shared_tariff_stale_001'}});
+ expect(stale.data.error).toBe('quote_changed');
+ const fresh=(await quote()).data.quote;
+ expect(fresh.deliveryFeeCents).toBe(37370);
+});
+it('does not advertise automatic delivery when the shared rule is disabled',async()=>{
+ const policy={active:false,mode:'per_km',max_meters:15000,minimum_cents:0,
+   base_cents:0,per_km_cents:2000};
+ expect((await api('/api/admin/delivery-rules/customer',{method:'POST',body:{company_id:'fulltech',policy}})).status).toBe(200);
+ const preview=await api('/api/store/commerce/resolve',{method:'POST',cookie:null,
+   body:{latitude:18.61,longitude:-68.71}});
+ expect(preview.data.automaticDeliveryConfigured).toBe(false);
+ const proposed=(await quote()).data.quote;
+ expect(proposed.reasons).toContain('delivery_policy_inactive');
+ expect(proposed.deliveryFeeCents).toBeNull();
+});
 it('quotes exact road distance and reuses the existing CRM order engine without trusting client amounts',async()=>{
  const q=await quote();expect(q.status).toBe(201);expect(q.data.quote).toMatchObject({status:'priced',deliveryFeeCents:110000,totalCents:210000});
  const body={...draft(),quoteId:q.data.quote.id,requestKey:'smart_order_001',deliveryFee:1,total:1,paymentStatus:'paid',paymentMethod:'transfer_now'};
  const order=await api('/api/store/orders',{method:'POST',cookie:alice.cookie,body});expect(order.status).toBe(201);expect(order.data.order).toMatchObject({total:2100,payment_status:'pending'});
+ const row=(await app.ctx.store.listAdmin({limit:5000})).find(item=>item.id===order.data.order.id);
+ const snapshot=JSON.parse(row.orderJson??row.order_json);
+ expect(snapshot.delivery.pickup).toMatchObject({origin_id:'origin_uat',latitude:18.6,longitude:-68.7});
+ expect(snapshot.delivery.route).toMatchObject({meters:10790,provider:'fixture'});
+ expect(snapshot.delivery.customer_quote_snapshot.fee_cents).toBe(110000);
+ const courierPay=computeCourierCompensation({order:snapshot,policy:{active:true,base_model:'DISTANCE',
+   distance_base_cents:0,distance_per_km_cents:1200,distance_min_cents:0,product_sale_percent:3}});
+ expect(courierPay?.breakdown.product_sale_base_cents).toBe(100000);
+ expect(courierPay?.total_cents).toBe(15948);
  expect((await api('/api/store/orders',{method:'POST',cookie:alice.cookie,body})).data.duplicate).toBe(true);
  expect((await api('/api/store/account/orders',{cookie:alice.cookie})).data.orders).toHaveLength(1);
  expect((await api('/api/store/account/commerce/quotes/'+q.data.quote.id,{cookie:alice.cookie})).data.quote.state).toBe('committed');

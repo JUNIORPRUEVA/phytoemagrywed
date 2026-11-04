@@ -34,6 +34,7 @@ const png = (extra = 40) =>
 
 /** OGG mínimo (cabecera `OggS`): es lo que graba el navegador. */
 const ogg = (extra = 40) => Buffer.concat([Buffer.from('OggS'), Buffer.alloc(extra, 3)]);
+const mp4 = () => Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypisom'), Buffer.alloc(64, 1)]);
 
 const fakeStorage = {
   enabled: true,
@@ -83,6 +84,10 @@ const fakeMedia = {
     if (fakeMedia.ambiguity) return { ok: false, error: {} };
     fakeMedia.sends.push({ to, mediaId, kind: 'audio' });
     return { ok: true, waMessageId: `wamid.AUD${fakeMedia.sends.length}` };
+  },
+  async sendVideo(to, { mediaId, caption }) {
+    fakeMedia.sends.push({ to, mediaId, caption, kind: 'video' });
+    return { ok: true, waMessageId: `wamid.VID${fakeMedia.sends.length}` };
   },
 };
 
@@ -147,7 +152,7 @@ const upload = (kind, buffer, params = {}) => {
   const query = new URLSearchParams({ kind, ...params }).toString();
   return fetch(`${app.url}/api/admin/conversations/${conversationId}/media?${query}`, {
     method: 'POST',
-    headers: { cookie, 'content-type': kind === 'audio' ? 'audio/ogg' : 'image/png' },
+    headers: { cookie, 'content-type': kind === 'audio' ? 'audio/ogg' : kind === 'video' ? 'video/mp4' : 'image/png' },
     body: buffer,
   });
 };
@@ -256,6 +261,23 @@ describe('entrante con archivo (imagen y audio)', () => {
     expect(message.media.mimeType).toBe('audio/ogg');
   });
 
+  it('un video entrante se descarga y se sirve como video autenticado', async () => {
+    fakeMedia.downloadMedia = async () => ({ ok: true, buffer: mp4(), mimeType: 'video/mp4' });
+    await inbound('wamid.MEDIA-VID', { type: 'video', video: { id: 'MEDIA_VID_1', mime_type: 'video/mp4', caption: 'Así funciona' } });
+    const thread = await waitFor(async () => {
+      const data = await json(await call(`/api/admin/conversations/${conversationId}/messages`));
+      const found = data.messages.find((row) => row.wa_message_id === 'wamid.MEDIA-VID');
+      return found?.media?.status === MEDIA_STATUS.STORED ? data : null;
+    }, 'el video guardado');
+    const message = thread.messages.find((row) => row.wa_message_id === 'wamid.MEDIA-VID');
+    expect(message).toMatchObject({ type: 'video', body: 'Así funciona' });
+    const file = await fetch(`${app.url}/api/admin/media/${message.media.id}`, { headers: { cookie } });
+    expect(file.status).toBe(200);
+    expect(file.headers.get('content-type')).toBe('video/mp4');
+    expect(Buffer.from(await file.arrayBuffer())).toEqual(mp4());
+    fakeMedia.downloadMedia = async () => ({ ok: true, buffer: png(), mimeType: 'image/png' });
+  });
+
   it('si el almacén falla, el mensaje SIGUE en la conversación y el archivo queda Failed', async () => {
     fakeStorage.broken = true;
     await inbound('wamid.MEDIA-IMG-FALLO', {
@@ -299,6 +321,16 @@ describe('entrante con archivo (imagen y audio)', () => {
 });
 
 describe('saliente con archivo (lo que manda el vendedor)', () => {
+  it('envía un video MP4 y lo deja disponible en el hilo', async () => {
+    const response = await upload('video', mp4(), { key: 'out:vid:1', caption: 'Mira el producto' });
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(fakeMedia.sends.at(-1)).toMatchObject({ kind: 'video', caption: 'Mira el producto' });
+    const thread = await json(await call(`/api/admin/conversations/${conversationId}/messages`));
+    const message = thread.messages.find((row) => row.id === body.message?.id);
+    expect(message).toMatchObject({ type: 'video', body: 'Mira el producto' });
+    expect(message.media.mimeType).toBe('video/mp4');
+  });
   it('sube una imagen, la envía y queda en el hilo como mensaje del negocio', async () => {
     fakeMedia.sends.length = 0;
     const response = await upload('image', png(), { key: 'out:img:1', caption: 'Te mando el frasco' });

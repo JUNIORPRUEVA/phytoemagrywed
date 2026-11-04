@@ -39,8 +39,9 @@ class CrmColors {
   /// `--pe-brand-800`.
   static const Color brand800 = Color(0xFF124BAA);
 
-  /// Acento secundario (avisos «en vivo»).
-  static const Color accent = Color(0xFF128C68);
+  /// Acento secundario (avisos «en vivo»). Azul de marca: el módulo ya no usa
+  /// verde para los acentos, así todo el CRM comparte el mismo azul.
+  static const Color accent = Color(0xFF145BD7);
 
   // ------------------------------------------------------------- superficies
   /// `--surface`.
@@ -403,6 +404,18 @@ class PwaIcons {
   static const String chatCall = '${base}chat-call.png';
   static const String chatMic = '${base}chat-microphone.png';
 
+  /// Iconos nuevos elegidos por el equipo (calendario con candado = cierre, y
+  /// grupo con «+» = usuarios). Se generan con `tool/make_pwa_icon.py`.
+  static const String cierre = '${base}cierre.png';
+  static const String usuarios = '${base}usuarios.png';
+
+  /// Engranaje elegido por el equipo para Configuración.
+  static const String settings = '${base}settings.png';
+
   /// Logotipo de marca (PNG con color propio, no se tiñe).
   static const String brandLogo = 'assets/pwa/branding/fulltech-crm-256.png';
+
+  /// Logotipo SIN fondo (para el arranque). Se genera con
+  /// `tool/make_pwa_icon.py` desde el arte original.
+  static const String brandMark = 'assets/pwa/branding/fulltech-crm-logo.png';
 }

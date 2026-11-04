@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import '../ventas/pos_launch_context.dart';
 
 import '../../app/crm_scope.dart';
 import '../../core/net/api_client.dart';
@@ -34,10 +35,11 @@ import 'desktop/conversation_actions.dart';
 enum _SidePanel { none, filters, newMessage }
 
 class ChatsDesktopScreen extends StatefulWidget {
-  const ChatsDesktopScreen({super.key, this.onNavigate, this.showRail = true});
+  const ChatsDesktopScreen({super.key, this.onNavigate, this.onOpenSale, this.showRail = true});
 
   /// Cambio de módulo desde el rail; lo provee el shell.
   final ValueChanged<String>? onNavigate;
+  final ValueChanged<PosLaunchContext>? onOpenSale;
 
   /// `false` cuando el shell ya pinta el menú lateral (nada de dos rails).
   final bool showRail;
@@ -67,6 +69,129 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
   /// recuperar desde la app. Se piden aparte, solo cuando hace falta.
   List<Conversation> _archivedRows = const [];
   bool _loadingArchived = false;
+  bool _aiGlobalEnabled = false;
+  bool _aiGlobalLoaded = false;
+  bool _aiGlobalUnavailable = false;
+  bool _aiGlobalBusy = false;
+  bool _aiConversationLoaded = false;
+  bool _aiConversationUnavailable = false;
+  bool _aiConversationBusy = false;
+  bool _aiLoadErrorShown = false;
+  String _aiConversationMode = 'inherit';
+  String? _aiLoadedConversationId;
+  String? _aiScheduledConversationId;
+
+  bool get _aiEffective => _aiConversationMode == 'on' ||
+      (_aiConversationMode != 'off' && _aiGlobalEnabled);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadAiGlobal());
+  }
+
+  Future<void> _loadAiGlobal() async {
+    if (mounted) {
+      setState(() {
+        _aiGlobalLoaded = false;
+        _aiGlobalUnavailable = false;
+      });
+    }
+    try {
+      final state = CrmScope.of(context, listen: false);
+      final data = await state.repository.aiChatGlobalControl();
+      if (mounted) {
+        setState(() {
+          _aiGlobalEnabled = data['enabled'] == true;
+          _aiGlobalLoaded = true;
+          _aiLoadErrorShown = false;
+        });
+      }
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _aiGlobalUnavailable = true);
+      if (mounted) _showAiLoadError(error);
+    }
+  }
+
+  Future<void> _loadAiConversation(String id) async {
+    if (mounted) {
+      setState(() {
+        _aiLoadedConversationId = id;
+        _aiConversationLoaded = false;
+        _aiConversationUnavailable = false;
+      });
+    }
+    try {
+      final state = CrmScope.of(context, listen: false);
+      final data = await state.repository.aiChatConversationControl(id);
+      if (mounted && _aiLoadedConversationId == id) {
+        setState(() {
+          _aiConversationMode = data['mode'] as String? ?? 'inherit';
+          _aiConversationLoaded = true;
+          _aiGlobalEnabled = data['globalEnabled'] == true;
+          _aiGlobalLoaded = true;
+          _aiLoadErrorShown = false;
+        });
+      }
+    } on ApiException catch (error) {
+      if (mounted && _aiLoadedConversationId == id) {
+        setState(() => _aiConversationUnavailable = true);
+      }
+      if (mounted && _aiLoadedConversationId == id) _showAiLoadError(error);
+    }
+  }
+
+  void _showAiLoadError(ApiException error) {
+    if (_aiLoadErrorShown) return;
+    _aiLoadErrorShown = true;
+    crmToast(context, error.statusCode == 404
+        ? 'El servidor local aún no cargó los controles de IA. Reinicia el backend UAT.'
+        : error.message);
+  }
+
+  Future<void> _toggleAiGlobal() async {
+    if (_aiGlobalBusy || !_aiGlobalLoaded) return;
+    setState(() => _aiGlobalBusy = true);
+    try {
+      final state = CrmScope.of(context, listen: false);
+      final data = await state.repository.setAiChatGlobalControl(!_aiGlobalEnabled);
+      if (mounted) {
+        setState(() => _aiGlobalEnabled = data['enabled'] == true);
+        crmToast(context, _aiGlobalEnabled
+            ? 'IA preparada para todos los chats. Todavía no responde automáticamente.'
+            : 'IA general desactivada. Las excepciones de cada chat se conservan.');
+      }
+    } on ApiException catch (error) {
+      if (mounted) crmToast(context, error.message);
+    } finally {
+      if (mounted) setState(() => _aiGlobalBusy = false);
+    }
+  }
+
+  Future<void> _setAiConversationMode(String id, String mode) async {
+    if (_aiConversationBusy || !_aiConversationLoaded) return;
+    if (mode == _aiConversationMode) return;
+    setState(() => _aiConversationBusy = true);
+    try {
+      final state = CrmScope.of(context, listen: false);
+      final data = await state.repository.setAiChatConversationControl(id, mode);
+      if (mounted && _aiLoadedConversationId == id) {
+        setState(() {
+          _aiConversationMode = data['mode'] as String? ?? mode;
+          _aiGlobalEnabled = data['globalEnabled'] == true;
+        });
+        crmToast(context, mode == 'inherit'
+            ? 'Este chat vuelve a usar el ajuste general de IA.'
+            : (_aiEffective
+                ? 'IA preparada en este chat. Todavía no responde automáticamente.'
+                : 'IA desactivada en este chat.'));
+      }
+    } on ApiException catch (error) {
+      if (mounted) crmToast(context, error.message);
+    } finally {
+      if (mounted) setState(() => _aiConversationBusy = false);
+    }
+  }
 
   Future<void> _cargarArchivadas() async {
     if (_loadingArchived) return;
@@ -126,6 +251,16 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
         _selectedId != null && conversations.any((row) => row.id == _selectedId)
         ? _selectedId
         : (conversations.isEmpty ? null : conversations.first.id);
+    if (selectedId != null && selectedId != _aiLoadedConversationId &&
+        selectedId != _aiScheduledConversationId) {
+      _aiScheduledConversationId = selectedId;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _aiScheduledConversationId == selectedId) {
+          _aiScheduledConversationId = null;
+          _loadAiConversation(selectedId);
+        }
+      });
+    }
     final user = state.session.user;
 
     final width = MediaQuery.sizeOf(context).width;
@@ -157,6 +292,19 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
             onSelect: (id) => setState(() => _selectedId = id),
             onAction: _runAction,
             onNewConversation: _newMessage,
+            aiEnabled: _aiGlobalEnabled,
+            aiLoaded: _aiGlobalLoaded,
+            aiBusy: _aiGlobalBusy,
+            aiUnavailable: _aiGlobalUnavailable,
+            aiTooltip: _aiGlobalUnavailable
+                ? 'IA no disponible: recarga el servidor y haz clic para reintentar'
+                : !_aiGlobalLoaded
+                ? 'Consultando estado de la IA'
+                : _aiGlobalEnabled
+                ? 'IA preparada para todos los chats. Aún no responde sola.'
+                : 'Preparar IA para todos los chats. Aún no responde sola.',
+            onToggleAi: state.session.can('settings.manage') && _aiGlobalLoaded ? _toggleAiGlobal : null,
+            onRetryAi: _aiGlobalUnavailable ? _loadAiGlobal : null,
             search: _search,
             onSearchChanged: (_) => setState(() {}),
             filters: _filters,
@@ -184,8 +332,27 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
                   conversationId: selectedId,
                   title: state.conversationById(selectedId)?.name ?? 'Conversación',
                   desktop: true,
+                  aiEnabled: selectedId == _aiLoadedConversationId && _aiConversationLoaded && _aiEffective,
+                  aiLoaded: selectedId == _aiLoadedConversationId && _aiConversationLoaded,
+                  aiBusy: _aiConversationBusy,
+                  aiUnavailable: selectedId == _aiLoadedConversationId && _aiConversationUnavailable,
+                  aiTooltip: selectedId == _aiLoadedConversationId && _aiConversationUnavailable
+                      ? 'IA no disponible: recarga el servidor y haz clic para reintentar'
+                      : selectedId == _aiLoadedConversationId && _aiConversationLoaded
+                      ? (_aiEffective
+                          ? 'IA preparada en este chat. Aún no responde sola.'
+                          : 'Preparar IA en este chat. Aún no responde sola.')
+                      : 'Cargando estado de la IA',
+                  aiMode: _aiConversationMode,
+                  aiGlobalEnabled: _aiGlobalEnabled,
+                  onToggleAi: selectedId == _aiLoadedConversationId && _aiConversationUnavailable
+                      ? () => _loadAiConversation(selectedId) : null,
+                  onSelectAiMode: state.session.can('chats.reply') &&
+                          selectedId == _aiLoadedConversationId && _aiConversationLoaded
+                      ? (mode) => _setAiConversationMode(selectedId, mode) : null,
                   autoAttach: _pendingAttach,
                   onNavigate: widget.onNavigate,
+                  onOpenSale: widget.onOpenSale,
                 ),
         ),
       ],

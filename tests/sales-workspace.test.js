@@ -202,15 +202,16 @@ describe('estado comercial del cliente (derivado, no inventado)', () => {
 });
 
 describe('customerStage compatible', () => {
-  it('la función pura no confunde seguimiento ni pedido creado con cliente', () => {
-    expect(CUSTOMER_STAGES).toEqual(['PROSPECT', 'INTERESTED', 'CUSTOMER', 'INACTIVE']);
+  it('la función pura distingue pedido abierto de compra entregada', () => {
+    expect(CUSTOMER_STAGES).toEqual(['PROSPECT', 'INTERESTED', 'CUSTOMER', 'REPEAT_CUSTOMER', 'INACTIVE']);
     expect(resolveCustomerStage({ customer: {}, purchases: [] })).toMatchObject({ stage: 'PROSPECT' });
     expect(resolveCustomerStage({ customer: { customer_stage_manual: 'INTERESTED' }, purchases: [] })).toMatchObject({
       stage: 'INTERESTED',
       source: 'manual',
     });
     expect(resolveCustomerStage({ customer: {}, purchases: [{ type: 'order_intent', status: 'nuevo' }] })).toMatchObject({
-      stage: 'PROSPECT',
+      stage: 'INTERESTED',
+      reason: 'pedido_creado',
     });
     expect(resolveCustomerStage({ customer: {}, purchases: [{ type: 'order_intent', status: 'cancelado' }] })).toMatchObject({
       stage: 'PROSPECT',

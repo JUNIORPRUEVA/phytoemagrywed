@@ -3,6 +3,7 @@ import {calculateSale,manualProducts} from '../public/admin/pos-math.js';
 import {orderOf,receiptPdf} from './orders.mjs';
 import {ticketsFor} from './pos-tickets.mjs';
 import {normalizeGroups} from './business-groups.mjs';
+import {storeOfProduct} from './store-catalog.mjs';
 
 const queues = new WeakMap();
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -21,9 +22,10 @@ function publicDocument(doc, actor) {
 }
 function inputOf(body,previous={}){  if(body.items!==undefined&&!Array.isArray(body.items))throw Object.assign(new Error('La lista de artículos no es válida.'),{status:422});
   const items=(body.items||[]).map(i=>({variantId:String(i.variantId),quantity:Number(i.quantity),discount:i.discount||{},
+    supplierId:String(i.supplierId??i.supplier_id??'').trim().slice(0,80),
     ...(i.manual?{manual:{name:String(i.manual.name||'').trim(),price:Number(i.manual.price),kind:i.manual.kind==='service'?'service':'product',cost:Number(i.manual.cost??previous.items?.find(p=>p.variantId===i.variantId)?.manual?.cost??0)}}:{})}));
   if(items.length>100)throw Object.assign(new Error('El ticket admite hasta 100 artículos.'),{status:422});
-  return {customerId:String(body.customerId||''),conversationId:String(body.conversationId||''),items,discount:body.discount||{},deliveryFee:Number(body.deliveryFee||0),notes:String(body.notes||'').slice(0,2000),address:String(body.address||'').slice(0,240),paymentMethod:body.paymentMethod||'CASH',location:body.location||null,
+  return {customerId:String(body.customerId||''),conversationId:String(body.conversationId||''),items,discount:body.discount||{},deliveryFee:Number(body.deliveryFee||0),deliveryQuoteId:String(body.deliveryQuoteId??body.delivery_quote_id??'').trim().slice(0,100),notes:String(body.notes||'').slice(0,2000),address:String(body.address||'').slice(0,240),paymentMethod:body.paymentMethod||'CASH',location:body.location||null,
     deliveryMethod:body.deliveryMethod==='pickup'?'pickup':'delivery',scheduledAt:String(body.scheduledAt||'').slice(0,40),deliveryNotes:String(body.deliveryNotes||'').slice(0,400),
     deliveryReference:String(body.deliveryReference||'').slice(0,240),deliveryAgentId:String(body.deliveryAgentId||'').slice(0,80),
     deliveryContact:body.deliveryContact?{name:String(body.deliveryContact.name||'').slice(0,80),phone:String(body.deliveryContact.phone||'').slice(0,40)}:null,
@@ -195,7 +197,8 @@ export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,
         if(!conversation||conversation.customer_id!==customer.id) return send(422,{ok:false,message:'La conversación no pertenece al cliente seleccionado.'});
       }
       if(!['CASH','TRANSFER'].includes(input.paymentMethod)) return send(422,{ok:false,message:'Selecciona efectivo o transferencia.'});
-      if(!Number.isInteger(input.deliveryFee)||input.deliveryFee<0) return send(422,{ok:false,message:'El envío debe expresarse en pesos enteros.'});
+      if(!Number.isSafeInteger(Math.round(input.deliveryFee*100))||input.deliveryFee<0||Math.abs(input.deliveryFee*100-Math.round(input.deliveryFee*100))>1e-6)
+        return send(422,{ok:false,message:'El envío debe expresarse en pesos y centavos válidos.'});
       /*
        * PEDIDO GUIADO (desde una conversación). La ubicación solo es obligatoria
        * cuando el pedido VA A SALIR CON UN MENSAJERO (`needsDelivery`): un retiro
@@ -216,6 +219,65 @@ export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,
         }
       }
       const products=await ctx.storeCatalog.list();
+      const productById=new Map(products.map(p=>[p.id,p]));
+      const companies=[...new Set(input.items.map(line=>productById.get(line.variantId))
+        .filter(Boolean).map(storeOfProduct))];
+      if(companies.length>1)return send(422,{ok:false,error:'mixed_company_cart',message:'Los productos de empresas diferentes necesitan pedidos separados.'});
+      const companyId=companies[0]??null;
+      if(companyId&&customer.company_id&&customer.company_id!==companyId)
+        return send(422,{ok:false,error:'customer_company_mismatch',message:'El cliente pertenece a otra empresa.'});
+      if(companyId&&input.conversationId){
+        const conversation=await db.get('conversations',input.conversationId);
+        if(conversation?.company_id&&conversation.company_id!==companyId)
+          return send(422,{ok:false,error:'conversation_company_mismatch',message:'La conversación pertenece a otra empresa.'});
+      }
+      const supplierByLine=[];
+      for(const line of input.items){
+        if(!line.supplierId){
+          if(kind!=='quote'&&productById.get(line.variantId)?.product_type==='third_party')
+            return send(422,{ok:false,error:'pickup_store_required',message:'Selecciona la tienda de recogida del producto externo antes de confirmar.'});
+          supplierByLine.push(null);continue;
+        }
+        const supplier=await db.get('suppliers',line.supplierId);
+        const product=productById.get(line.variantId);
+        if(!supplier||supplier.active===false||!product||supplier.company_id!==storeOfProduct(product))
+          return send(422,{ok:false,error:'invalid_pickup_store',message:'La tienda de recogida no corresponde a este producto.'});
+        const link=await db.findBy('product_suppliers','link_key',`${supplier.company_id}:${line.variantId}:${supplier.id}`);
+        if(!link||link.active===false||link.availability==='unavailable')
+          return send(422,{ok:false,error:'product_store_unavailable',message:'Este producto no está disponible en la tienda seleccionada.'});
+        if(link.authorized_price_cents!=null&&link.authorized_price_cents!==product.price_cents)
+          return send(409,{ok:false,error:'store_price_requires_review',message:'El precio autorizado de esta tienda difiere del catálogo. Revisa la tarifa antes de confirmar.'});
+        supplierByLine.push({supplier,link,product});
+      }
+      const chosenStores=[...new Map(supplierByLine.filter(Boolean).map(row=>[row.supplier.id,row.supplier])).values()];
+      if(kind==='invoice'&&chosenStores.length)
+        return send(409,{ok:false,error:'store_pickup_requires_open_order',message:'Los productos de tienda necesitan un pedido abierto para registrar la recogida y la entrega antes de cerrar la venta.'});
+      let pickupSnapshot=chosenStores.length===1?{
+        supplier_id:chosenStores[0].id,name:chosenStores[0].name,
+        address:chosenStores[0].address,reference:chosenStores[0].references||'',
+        latitude:chosenStores[0].lat,longitude:chosenStores[0].lng,
+        confirmed_at:ctx.clock().toISOString(),
+      }:null;
+      let customerDeliverySnapshot=null;
+      if(input.deliveryQuoteId){
+        const quote=await db.get('delivery_quotes',input.deliveryQuoteId);
+        const policy=quote?.policy_id?await db.get('delivery_customer_policies',quote.policy_id):null;
+        if(!quote||!policy||quote.company_id!==companyId||policy.updated_at!==quote.policy_updated_at||
+          Date.parse(quote.expires_at)<ctx.clock().getTime()||chosenStores.length!==1||
+          quote.supplier_id!==chosenStores[0].id||input.deliveryMethod==='pickup')
+          return send(409,{ok:false,error:'delivery_quote_changed',message:'Actualiza la cotización del delivery antes de confirmar.'});
+        if(input.location&&(Math.abs(Number(input.location.latitude)-quote.destination.latitude)>1e-6||
+          Math.abs(Number(input.location.longitude)-quote.destination.longitude)>1e-6))
+          return send(409,{ok:false,error:'delivery_destination_changed',message:'La ubicación cambió. Cotiza nuevamente el delivery.'});
+        input.location={...quote.destination};
+        input.deliveryFee=quote.fee_cents/100;
+        pickupSnapshot=quote.pickup;
+        customerDeliverySnapshot={ quote_id:quote.id, fee_cents:quote.fee_cents, route:quote.route,
+          policy_id:quote.policy_id, policy_updated_at:quote.policy_updated_at,
+          destination:quote.destination, pickup:quote.pickup };
+      }else if(chosenStores.length&&input.deliveryMethod==='delivery'&&input.deliveryFee>0){
+        return send(409,{ok:false,error:'delivery_quote_required',message:'Calcula el delivery desde la tienda antes de cobrarlo.'});
+      }
       let sale;
       try{sale=calculateSale(input.items,products,input.discount,input.deliveryFee);}catch(e){return send(422,{ok:false,message:e.message});}
       if(!Number.isSafeInteger(body.expectedTotal)||body.expectedTotal!==sale.total_cents) return send(409,{ok:false,error:'price_changed',message:'Los precios cambiaron. Revisa el total actualizado antes de confirmar.'});
@@ -240,12 +302,14 @@ export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,
       let result;
       if(kind==='quote') result={document:publicDocument(document,actor),receiptUrl:`/api/admin/pos/quotes/${id}/receipt`};
       else {
-        const created=await createOrder(ctx,{...input,id:orderId,items:sale.items.map(i=>({variantId:i.variantId,quantity:i.quantity,unitPrice:i.unit_price_cents/100,lineDiscountCents:i.discount_cents})),
+        const created=await createOrder(ctx,{...input,id:orderId,items:sale.items.map((i,index)=>({variantId:i.variantId,quantity:i.quantity,unitPrice:i.unit_price_cents/100,lineDiscountCents:i.discount_cents,
+          ...(supplierByLine[index]?{supplier_id:supplierByLine[index].supplier.id,supplier_name:supplierByLine[index].supplier.name,
+            product_type:supplierByLine[index].product.product_type??'third_party',supplier_cost_cents:supplierByLine[index].link.cost_cents}: {})})),
           discount:sale.discount_cents/100,status:kind==='invoice'?'entregado':'nuevo',
           delivery:{address:input.address,method:input.deliveryMethod,note:input.deliveryNotes,scheduledAt:input.scheduledAt,reference:input.deliveryReference},
           paymentStatus:kind==='invoice'?'paid':input.paymentStatus,deliveryLocation:input.location,pos:true,
           ...(kind==='invoice'?{invoiceId:id,invoiceNumber:document.number}:{})},actor,
-          {manualProducts:manualProducts(input.items).map(p=>({...p,general:true,price:p.price_cents/100,label:p.name}))});
+          {companyId,pickupSnapshot,customerDeliverySnapshot,manualProducts:manualProducts(input.items).map(p=>({...p,general:true,price:p.price_cents/100,label:p.name}))});
         if(!created.ok) {
           await db.update('pos_documents',id,{status:'failed',failure:created.error});
           return send(created.status||422,{ok:false,error:created.error,operationPending:true,orderId:created.orderId||orderId,message:created.message||'No se pudo guardar. Revisa Pedidos antes de volver a cobrar.'});

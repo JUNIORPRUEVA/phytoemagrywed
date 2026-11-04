@@ -9,11 +9,18 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 /// Cliente con sesión y una respuesta fija, apuntando lo que le llega.
-({CrmRepository repo, List<http.BaseRequest> requests}) buildClient(Map<String, dynamic> body, {int status = 200}) {
+({CrmRepository repo, List<http.BaseRequest> requests}) buildClient(
+  Map<String, dynamic> body, {
+  int status = 200,
+}) {
   final requests = <http.BaseRequest>[];
   final client = MockClient((request) async {
     requests.add(request);
-    return http.Response(jsonEncode(body), status, headers: {'content-type': 'application/json'});
+    return http.Response(
+      jsonEncode(body),
+      status,
+      headers: {'content-type': 'application/json'},
+    );
   });
   final api = ApiClient(
     httpClient: client,
@@ -25,30 +32,72 @@ import 'package:http/testing.dart';
 
 void main() {
   group('multimedia del chat', () {
-    test('la subida va con kind, caption y clave en la URL, y bytes crudos', () async {
-      final harness = buildClient({'ok': true, 'mediaType': 'image'});
-      await harness.repo.api.restoreSession();
-
-      await harness.repo.sendMedia(
-        'c1',
-        bytes: [1, 2, 3, 4],
-        kind: 'image',
-        filename: 'foto.jpg',
-        caption: 'Hola',
-        operationKey: 'img_1234567890abcdef',
-      );
-
-      final request = harness.requests.single;
-      expect(request.method, 'POST');
-      expect(request.url.path, '/api/admin/conversations/c1/media');
-      expect(request.url.queryParameters['kind'], 'image');
-      expect(request.url.queryParameters['caption'], 'Hola');
-      expect(request.url.queryParameters['key'], 'img_1234567890abcdef');
-      expect(request.headers['content-type'], 'image/jpeg');
-      expect(request.headers['x-phyto-filename'], 'foto.jpg');
-      expect(request.headers[ApiClient.operationHeader], 'img_1234567890abcdef');
-      expect((request as http.Request).bodyBytes, [1, 2, 3, 4]);
+    test(
+      'la nota entrante de WhatsApp conserva el tipo voice y se anuncia como audio',
+      () {
+        final conversation = Conversation.fromJson({
+          'id': 'c1',
+          'last_message': {'type': 'voice', 'body': ''},
+        });
+        final message = ChatMessage.fromJson({
+          'id': 'm1',
+          'type': 'voice',
+          'media': {'id': 'media_1'},
+        });
+        expect(conversation.preview, 'Nota de voz');
+        expect(message.type, 'voice');
+        expect(message.hasMedia, isTrue);
+      },
+    );
+    test('un enlace de GPS histórico se presenta como mapa', () {
+      final message = ChatMessage.fromJson({
+        'id': 'm1',
+        'type': 'text',
+        'body':
+            '📍 Villa Cerro\nhttps://maps.google.com/?q=-18.61747,-68.71061',
+      });
+      expect(message.hasCoordinates, isTrue);
+      expect(message.latitude, closeTo(-18.61747, 0.00001));
+      expect(message.longitude, closeTo(-68.71061, 0.00001));
     });
+    test('texto y emoji llegan intactos al contrato de envío', () async {
+      final harness = buildClient({'ok': true});
+      await harness.repo.sendMessage('c1', 'Hola 😊 ¿Dónde estás?');
+      final body =
+          jsonDecode((harness.requests.single as http.Request).body)
+              as Map<String, dynamic>;
+      expect(body['body'], 'Hola 😊 ¿Dónde estás?');
+    });
+    test(
+      'la subida va con kind, caption y clave en la URL, y bytes crudos',
+      () async {
+        final harness = buildClient({'ok': true, 'mediaType': 'image'});
+        await harness.repo.api.restoreSession();
+
+        await harness.repo.sendMedia(
+          'c1',
+          bytes: [1, 2, 3, 4],
+          kind: 'image',
+          filename: 'foto.jpg',
+          caption: 'Hola',
+          operationKey: 'img_1234567890abcdef',
+        );
+
+        final request = harness.requests.single;
+        expect(request.method, 'POST');
+        expect(request.url.path, '/api/admin/conversations/c1/media');
+        expect(request.url.queryParameters['kind'], 'image');
+        expect(request.url.queryParameters['caption'], 'Hola');
+        expect(request.url.queryParameters['key'], 'img_1234567890abcdef');
+        expect(request.headers['content-type'], 'image/jpeg');
+        expect(request.headers['x-phyto-filename'], 'foto.jpg');
+        expect(
+          request.headers[ApiClient.operationHeader],
+          'img_1234567890abcdef',
+        );
+        expect((request as http.Request).bodyBytes, [1, 2, 3, 4]);
+      },
+    );
 
     test('el PDF y el audio se anuncian con su tipo real', () async {
       for (final entry in [
@@ -56,26 +105,47 @@ void main() {
         ('nota.m4a', 'audio', 'audio/mp4'),
         ('nota.ogg', 'audio', 'audio/ogg'),
         ('foto.png', 'image', 'image/png'),
+        ('clip.mp4', 'video', 'video/mp4'),
       ]) {
         final harness = buildClient({'ok': true});
-        await harness.repo.sendMedia('c1', bytes: [0], kind: entry.$2, filename: entry.$1);
-        expect(harness.requests.single.headers['content-type'], entry.$3, reason: entry.$1);
+        await harness.repo.sendMedia(
+          'c1',
+          bytes: [0],
+          kind: entry.$2,
+          filename: entry.$1,
+        );
+        expect(
+          harness.requests.single.headers['content-type'],
+          entry.$3,
+          reason: entry.$1,
+        );
       }
     });
 
     test('sin nombre de archivo se deduce por el tipo de envío', () async {
       final harness = buildClient({'ok': true});
       await harness.repo.sendMedia('c1', bytes: [0], kind: 'document');
-      expect(harness.requests.single.headers['content-type'], 'application/pdf');
+      expect(
+        harness.requests.single.headers['content-type'],
+        'application/pdf',
+      );
     });
 
     test('la descarga del adjunto usa la ruta autenticada', () async {
       final requests = <http.BaseRequest>[];
       final client = MockClient((request) async {
         requests.add(request);
-        return http.Response.bytes([9, 9], 200, headers: {'content-type': 'image/png'});
+        return http.Response.bytes(
+          [9, 9],
+          200,
+          headers: {'content-type': 'image/png'},
+        );
       });
-      final api = ApiClient(httpClient: client, baseUrl: 'http://localhost:4000', sessionStore: MemorySessionStore('s'));
+      final api = ApiClient(
+        httpClient: client,
+        baseUrl: 'http://localhost:4000',
+        sessionStore: MemorySessionStore('s'),
+      );
       await api.restoreSession();
       final repo = CrmRepository(api);
 
@@ -85,24 +155,82 @@ void main() {
       expect(file.bytes, [9, 9]);
       expect(file.isImage, isTrue);
     });
+
+    test(
+      'los adjuntos descargados conservan una extensión que Windows puede abrir',
+      () async {
+        for (final entry in [
+          ('audio/ogg', 'ogg'),
+          ('video/mp4', 'mp4'),
+          ('application/pdf', 'pdf'),
+        ]) {
+          final api = ApiClient(
+            httpClient: MockClient(
+              (_) async => http.Response.bytes(
+                [1, 2],
+                200,
+                headers: {'content-type': entry.$1},
+              ),
+            ),
+            baseUrl: 'http://localhost:4000',
+            sessionStore: MemorySessionStore('s'),
+          );
+          await api.restoreSession();
+          final file = await CrmRepository(api).mediaBytes('m1');
+          expect(file.fileName, 'adjunto.${entry.$2}');
+        }
+      },
+    );
   });
 
   group('acciones de la conversación', () {
     test('enviar ubicación usa el contrato real', () async {
       final harness = buildClient({'ok': true});
-      await harness.repo.sendLocation('c1', locationId: 'loc1', operationKey: 'loc_1234567890abcdef');
+      await harness.repo.sendLocation(
+        'c1',
+        locationId: 'loc1',
+        operationKey: 'loc_1234567890abcdef',
+      );
 
-      final body = jsonDecode((harness.requests.single as http.Request).body) as Map<String, dynamic>;
-      expect(harness.requests.single.url.path, '/api/admin/conversations/c1/location');
+      final body =
+          jsonDecode((harness.requests.single as http.Request).body)
+              as Map<String, dynamic>;
+      expect(
+        harness.requests.single.url.path,
+        '/api/admin/conversations/c1/location',
+      );
       expect(body['locationId'], 'loc1');
       expect(body['confirmed'], isTrue);
       expect(body['idempotencyKey'], 'loc_1234567890abcdef');
     });
 
+    test('la ubicación GPS envía coordenadas confirmadas', () async {
+      final harness = buildClient({'ok': true});
+      await harness.repo.sendCurrentLocation(
+        'c1',
+        latitude: 18.4861,
+        longitude: -69.9312,
+        operationKey: 'gps_1234567890abcdef',
+      );
+      final body =
+          jsonDecode((harness.requests.single as http.Request).body)
+              as Map<String, dynamic>;
+      expect(body['latitude'], 18.4861);
+      expect(body['longitude'], -69.9312);
+      expect(body['confirmed'], isTrue);
+      expect(body['source'], 'browser_geolocation');
+    });
+
     test('plantilla: solo se manda el nombre si no hay valores', () async {
       final harness = buildClient({'ok': true});
-      await harness.repo.sendTemplate('c1', 'phyto_bienvenida', operationKey: 'tpl_1234567890abcdef');
-      final body = jsonDecode((harness.requests.single as http.Request).body) as Map<String, dynamic>;
+      await harness.repo.sendTemplate(
+        'c1',
+        'phyto_bienvenida',
+        operationKey: 'tpl_1234567890abcdef',
+      );
+      final body =
+          jsonDecode((harness.requests.single as http.Request).body)
+              as Map<String, dynamic>;
       expect(body['template'], 'phyto_bienvenida');
       expect(body.containsKey('templateValues'), isFalse);
     });
@@ -110,9 +238,18 @@ void main() {
     test('las tres acciones de asignación usan su ruta', () async {
       for (final action in ['take', 'release', 'assign']) {
         final harness = buildClient({'ok': true});
-        await harness.repo.assignConversation('c1', action: action, userId: action == 'assign' ? 'u9' : null);
-        expect(harness.requests.single.url.path, '/api/admin/conversations/c1/$action');
-        final body = jsonDecode((harness.requests.single as http.Request).body) as Map<String, dynamic>;
+        await harness.repo.assignConversation(
+          'c1',
+          action: action,
+          userId: action == 'assign' ? 'u9' : null,
+        );
+        expect(
+          harness.requests.single.url.path,
+          '/api/admin/conversations/c1/$action',
+        );
+        final body =
+            jsonDecode((harness.requests.single as http.Request).body)
+                as Map<String, dynamic>;
         if (action == 'assign') {
           expect(body['userId'], 'u9');
         } else {
@@ -121,19 +258,46 @@ void main() {
       }
     });
 
-    test('solo se ofrecen usuarios activos y de oficina para asignar', () async {
-      final harness = buildClient({
-        'ok': true,
-        'users': [
-          {'id': 'u1', 'username': 'ana', 'display_name': 'Ana', 'role': 'AGENT', 'active': true},
-          {'id': 'u2', 'username': 'rui', 'display_name': 'Rui', 'role': 'AGENT', 'active': false},
-          {'id': 'u3', 'username': 'rep', 'display_name': 'Rep', 'role': 'DELIVERY', 'active': true},
-          {'id': 'u4', 'username': 'adm', 'display_name': 'Adm', 'role': 'ADMIN', 'active': true},
-        ],
-      });
-      final users = await harness.repo.assignableUsers();
-      expect(users.map((row) => row['id']), ['u1', 'u4']);
-    });
+    test(
+      'solo se ofrecen usuarios activos y de oficina para asignar',
+      () async {
+        final harness = buildClient({
+          'ok': true,
+          'users': [
+            {
+              'id': 'u1',
+              'username': 'ana',
+              'display_name': 'Ana',
+              'role': 'AGENT',
+              'active': true,
+            },
+            {
+              'id': 'u2',
+              'username': 'rui',
+              'display_name': 'Rui',
+              'role': 'AGENT',
+              'active': false,
+            },
+            {
+              'id': 'u3',
+              'username': 'rep',
+              'display_name': 'Rep',
+              'role': 'DELIVERY',
+              'active': true,
+            },
+            {
+              'id': 'u4',
+              'username': 'adm',
+              'display_name': 'Adm',
+              'role': 'ADMIN',
+              'active': true,
+            },
+          ],
+        });
+        final users = await harness.repo.assignableUsers();
+        expect(users.map((row) => row['id']), ['u1', 'u4']);
+      },
+    );
 
     test('las plantillas se filtran por aprobadas', () async {
       final harness = buildClient({
@@ -150,69 +314,98 @@ void main() {
   });
 
   group('asistente IA contextual (Centro IA)', () {
-    test('la consulta va a la ruta del panel web con conversación y acción', () async {
-      final harness = buildClient({
-        'ok': true,
-        'ai': true,
-        'answer': 'Le falta la dirección.',
-        'bullets': ['Pedido abierto'],
-        'suggestions': ['¿Me confirmas la dirección?'],
-        'draft': 'Hola María, ¿me confirmas la dirección de entrega?',
-        'sources': [
-          {'type': 'customer', 'label': 'Expediente del cliente'},
-        ],
-        'scope': {'conversationId': 'c1'},
-      });
-      final data = await harness.repo.assistantQuery(
-        conversationId: 'c1',
-        action: 'draft_reply',
-      );
+    test(
+      'la consulta va a la ruta del panel web con conversación y acción',
+      () async {
+        final harness = buildClient({
+          'ok': true,
+          'ai': true,
+          'answer': 'Le falta la dirección.',
+          'bullets': ['Pedido abierto'],
+          'suggestions': ['¿Me confirmas la dirección?'],
+          'draft': 'Hola María, ¿me confirmas la dirección de entrega?',
+          'sources': [
+            {'type': 'customer', 'label': 'Expediente del cliente'},
+          ],
+          'scope': {'conversationId': 'c1'},
+        });
+        final data = await harness.repo.assistantQuery(
+          conversationId: 'c1',
+          action: 'draft_reply',
+        );
 
-      final request = harness.requests.single;
-      expect(request.method, 'POST');
-      expect(request.url.path, '/api/admin/assistant/query');
-      final body = jsonDecode((request as http.Request).body) as Map<String, dynamic>;
-      expect(body['conversationId'], 'c1');
-      expect(body['action'], 'draft_reply');
-      expect(body['message'], '');
-      expect(data['ai'], isTrue);
-      expect('${data['draft']}', contains('dirección'));
-    });
+        final request = harness.requests.single;
+        expect(request.method, 'POST');
+        expect(request.url.path, '/api/admin/assistant/query');
+        final body =
+            jsonDecode((request as http.Request).body) as Map<String, dynamic>;
+        expect(body['conversationId'], 'c1');
+        expect(body['action'], 'draft_reply');
+        expect(body['message'], '');
+        expect(data['ai'], isTrue);
+        expect('${data['draft']}', contains('dirección'));
+      },
+    );
 
     test('la pregunta libre lleva el texto del agente', () async {
-      final harness = buildClient({'ok': true, 'ai': false, 'reason': 'ai_unavailable'});
+      final harness = buildClient({
+        'ok': true,
+        'ai': false,
+        'reason': 'ai_unavailable',
+      });
       await harness.repo.assistantQuery(
         conversationId: 'c1',
         action: 'free',
         message: '¿Qué le falta para cerrar?',
       );
-      final body = jsonDecode((harness.requests.single as http.Request).body) as Map<String, dynamic>;
+      final body =
+          jsonDecode((harness.requests.single as http.Request).body)
+              as Map<String, dynamic>;
       expect(body['action'], 'free');
       expect(body['message'], '¿Qué le falta para cerrar?');
     });
 
-    test('confirmar y descartar usan la ruta de acciones con la huella', () async {
-      final confirm = buildClient({'ok': true});
-      await confirm.repo.assistantDecision(proposalId: 'p 1', confirm: true, fingerprint: 'abc123');
-      final request = confirm.requests.single;
-      expect(request.url.path, '/api/admin/assistant/actions/p%201/confirm');
-      expect(jsonDecode((request as http.Request).body)['fingerprint'], 'abc123');
+    test(
+      'confirmar y descartar usan la ruta de acciones con la huella',
+      () async {
+        final confirm = buildClient({'ok': true});
+        await confirm.repo.assistantDecision(
+          proposalId: 'p 1',
+          confirm: true,
+          fingerprint: 'abc123',
+        );
+        final request = confirm.requests.single;
+        expect(request.url.path, '/api/admin/assistant/actions/p%201/confirm');
+        expect(
+          jsonDecode((request as http.Request).body)['fingerprint'],
+          'abc123',
+        );
 
-      final cancel = buildClient({'ok': true});
-      await cancel.repo.assistantDecision(proposalId: 'p1', confirm: false);
-      expect(cancel.requests.single.url.path, '/api/admin/assistant/actions/p1/cancel');
-      expect((cancel.requests.single as http.Request).body, '{}');
-    });
+        final cancel = buildClient({'ok': true});
+        await cancel.repo.assistantDecision(proposalId: 'p1', confirm: false);
+        expect(
+          cancel.requests.single.url.path,
+          '/api/admin/assistant/actions/p1/cancel',
+        );
+        expect((cancel.requests.single as http.Request).body, '{}');
+      },
+    );
 
     test('el mensaje de pedido con IA devuelve solo el texto', () async {
-      final harness = buildClient({'ok': true, 'text': 'Hola, ¿me pasas el comprobante?', 'ai': true});
+      final harness = buildClient({
+        'ok': true,
+        'text': 'Hola, ¿me pasas el comprobante?',
+        'ai': true,
+      });
       final texto = await harness.repo.aiOrderMessage(
         conversationId: 'c1',
         missing: ['comprobante'],
         orderNumber: 'PE-1',
         total: 1250,
       );
-      final body = jsonDecode((harness.requests.single as http.Request).body) as Map<String, dynamic>;
+      final body =
+          jsonDecode((harness.requests.single as http.Request).body)
+              as Map<String, dynamic>;
       expect(harness.requests.single.url.path, '/api/admin/ai/order-message');
       expect(body['missing'], ['comprobante']);
       expect(body['orderNumber'], 'PE-1');
@@ -244,7 +437,11 @@ void main() {
       expect(withLocation.hasCoordinates, isTrue);
       expect(withLocation.latitude, closeTo(18.4861, 0.0001));
 
-      final plain = ChatMessage.fromJson({'id': 'm3', 'direction': 'inbound', 'body': 'hola'});
+      final plain = ChatMessage.fromJson({
+        'id': 'm3',
+        'direction': 'inbound',
+        'body': 'hola',
+      });
       expect(plain.hasMedia, isFalse);
       expect(plain.hasCoordinates, isFalse);
     });

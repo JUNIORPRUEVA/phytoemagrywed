@@ -283,6 +283,13 @@ export async function postMessage({
       actor,
       data: { seq, author_type: authorType, preview: patch.last_message_preview, message_id: doc.id, mentioned },
     });
+    if (authorType === 'user') {
+      try {
+        await deps?.onTicketEvent?.({ type: 'message.created', ticket: updated });
+      } catch {
+        /* El mensaje ya está guardado; un fallo del agente no bloquea el hilo. */
+      }
+    }
 
     return {
       ok: true,

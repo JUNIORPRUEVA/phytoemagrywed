@@ -83,6 +83,10 @@ export function normalizeSupplier(input = {}) {
   const references = clean(input.references, 300);
   const hours = clean(input.hours, 160);
   const notes = clean(input.notes, 500);
+  const type = clean(input.type ?? input.establishment_type, 40) || 'store';
+  if (!['store', 'supplier', 'warehouse', 'other'].includes(type)) {
+    throw fail('invalid_supplier_type', 'El tipo de establecimiento no es válido.');
+  }
 
   let lat = coordinate(input.lat, -90, 90);
   let lng = coordinate(input.lng, -180, 180);
@@ -100,7 +104,11 @@ export function normalizeSupplier(input = {}) {
 
   return {
     name,
+    type,
     phone,
+    whatsapp: clean(input.whatsapp, 40),
+    responsible: clean(input.responsible, 120),
+    pickup_instructions: clean(input.pickup_instructions ?? input.pickupInstructions, 500),
     address,
     province,
     municipality,
@@ -120,7 +128,7 @@ export function locationStatus(supplier) {
   return supplier && Number.isFinite(supplier.lat) && Number.isFinite(supplier.lng) ? 'ok' : 'pending';
 }
 
-/** Clave para no duplicar tiendas: nombre y teléfono, sin mayúsculas ni acentos. */
+/** Clave de posible duplicado por nombre y dirección; el teléfono nunca identifica la tienda. */
 export function supplierKey(input = {}) {
   const normal = (value) =>
     String(value ?? '')
@@ -129,7 +137,7 @@ export function supplierKey(input = {}) {
       .replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-z0-9]+/g, ' ')
       .trim();
-  return `${normal(input.name)}|${String(input.phone ?? '').replace(/\D/g, '')}`;
+  return `${normal(input.name)}|${normal(input.address)}|${normal(input.municipality)}`;
 }
 
 /** Normaliza la relación producto ↔ tienda. */
@@ -141,6 +149,11 @@ export function normalizeProductSupplier(input = {}) {
   if (costCents !== null && (!Number.isFinite(costCents) || costCents < 0 || costCents > 1e10)) {
     throw fail('invalid_cost', 'El costo en esa tienda no es válido.');
   }
+  const price = input.authorized_price_cents ?? input.authorizedPriceCents;
+  const authorizedPriceCents = price === null || price === undefined || price === '' ? null : Math.round(Number(price));
+  if (authorizedPriceCents !== null && (!Number.isSafeInteger(authorizedPriceCents) || authorizedPriceCents < 0)) {
+    throw fail('invalid_authorized_price', 'El precio autorizado no es válido.');
+  }
   const availability = ['available', 'unavailable', 'unknown'].includes(input.availability)
     ? input.availability
     : 'unknown';
@@ -150,6 +163,8 @@ export function normalizeProductSupplier(input = {}) {
     supplier_id: supplierId,
     cost_cents: costCents,
     supplier_code: clean(input.supplier_code ?? input.supplierCode, 80),
+    authorized_price_cents: authorizedPriceCents,
+    active: input.active === undefined ? true : input.active === true,
     availability: availability === 'available' && !verifiedAt ? 'unknown' : availability,
     verified_at: verifiedAt,
     pickup_eta_minutes:
@@ -207,6 +222,13 @@ export function groupItemsBySupplier(items = []) {
     group.cost_cents += unitCost * quantity;
   }
   return [...groups.values()].sort((a, b) => a.supplier_id.localeCompare(b.supplier_id));
+}
+
+/** Tiendas de origen distintas conservadas en las líneas del pedido. */
+export function pickupStoreIds(items = []) {
+  return [...new Set((Array.isArray(items) ? items : [])
+    .map((item) => clean(item?.supplier_id ?? item?.supplierId, 80))
+    .filter(Boolean))];
 }
 
 /** Crea/actualiza las recogidas de un pedido sin duplicarlas (por tienda). */

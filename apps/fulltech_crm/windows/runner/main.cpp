@@ -49,13 +49,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   window.SetQuitOnClose(true);
 
   /*
-   * Barra de título con el azul claro de marca (#E5EFFF) y texto oscuro.
+   * Barra de título blanca con texto oscuro.
    *
    * Sin esto Windows la pintaba negra cuando el sistema está en tema oscuro y
    * el usuario la percibía como una franja negra encima de la app.
    */
   if (HWND handle = window.GetHandle()) {
-    const COLORREF caption_color = RGB(0xE5, 0xEF, 0xFF);
+    const COLORREF caption_color = RGB(0xFF, 0xFF, 0xFF);
     const COLORREF text_color = RGB(0x14, 0x24, 0x3D);
     const COLORREF border_color = RGB(0xDC, 0xE5, 0xF2);
     const BOOL light_titlebar = FALSE;

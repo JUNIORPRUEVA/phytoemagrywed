@@ -17,7 +17,8 @@ void main() {
     (widget) => widget is PwaIcon && widget.asset == PwaIcons.plus,
   );
 
-  CatalogProduct product({int stock = 5, bool available = true}) => CatalogProduct(
+  CatalogProduct product({int stock = 5, bool available = true}) =>
+      CatalogProduct(
         id: 'prd_1',
         name: 'Auriculares Pro 4',
         presentations: [
@@ -35,12 +36,12 @@ void main() {
       );
 
   PosLine line({int quantity = 2}) => PosLine(
-        variantId: 'var_1',
-        productName: 'Auriculares Pro 4',
-        presentationName: 'Unidad',
-        unitPriceCents: 90000,
-        quantity: quantity,
-      );
+    variantId: 'var_1',
+    productName: 'Auriculares Pro 4',
+    presentationName: 'Unidad',
+    unitPriceCents: 90000,
+    quantity: quantity,
+  );
 
   Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
 
@@ -52,37 +53,49 @@ void main() {
   }
 
   group('tarjeta de producto', () {
-    testWidgets('muestra nombre, precio y disponibilidad y agrega al pulsar', (tester) async {
+    testWidgets('muestra nombre, precio y disponibilidad y agrega al pulsar', (
+      tester,
+    ) async {
       var added = 0;
       final item = product();
-      await tester.pumpWidget(wrap(SizedBox(
-        width: 200,
-        height: 216,
-        child: PosProductCard(
-          product: item,
-          presentation: item.presentations.first,
-          onAdd: () => added++,
+      await tester.pumpWidget(
+        wrap(
+          SizedBox(
+            width: 200,
+            height: 216,
+            child: PosProductCard(
+              product: item,
+              presentation: item.presentations.first,
+              onAdd: () => added++,
+            ),
+          ),
         ),
-      )));
+      );
       expect(find.text('Auriculares Pro 4'), findsOneWidget);
       expect(find.textContaining('900'), findsWidgets);
-      expect(find.text('Disp. 5'), findsOneWidget);
+      expect(find.text('Stock 5'), findsOneWidget);
       await tester.tap(addIcon);
       expect(added, 1);
     });
 
-    testWidgets('sin existencias queda deshabilitada y no agrega', (tester) async {
+    testWidgets('sin existencias queda deshabilitada y no agrega', (
+      tester,
+    ) async {
       var added = 0;
       final item = product(stock: 0, available: false);
-      await tester.pumpWidget(wrap(SizedBox(
-        width: 200,
-        height: 216,
-        child: PosProductCard(
-          product: item,
-          presentation: item.presentations.first,
-          onAdd: () => added++,
+      await tester.pumpWidget(
+        wrap(
+          SizedBox(
+            width: 200,
+            height: 216,
+            child: PosProductCard(
+              product: item,
+              presentation: item.presentations.first,
+              onAdd: () => added++,
+            ),
+          ),
         ),
-      )));
+      );
       expect(find.text('Sin stock'), findsOneWidget);
       await tester.tap(addIcon, warnIfMissed: false);
       expect(added, 0);
@@ -90,12 +103,14 @@ void main() {
   });
 
   group('rejilla', () {
-    testWidgets('filtra por texto y avisa cuando no hay coincidencias', (tester) async {
-      await tester.pumpWidget(wrap(PosProductGrid(
-        products: [product()],
-        query: 'zzz',
-        onAdd: (_, _) {},
-      )));
+    testWidgets('filtra por texto y avisa cuando no hay coincidencias', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(
+          PosProductGrid(products: [product()], query: 'zzz', onAdd: (_, _) {}),
+        ),
+      );
       expect(find.textContaining('Ningún producto coincide'), findsOneWidget);
     });
   });
@@ -129,42 +144,59 @@ void main() {
       );
     }
 
-    testWidgets('pinta la línea, el subtotal y el total y cobra', (tester) async {
+    testWidgets('pinta la línea y el total y permite cobrar', (tester) async {
       desktopSurface(tester);
       var checkedOut = 0;
-      await tester.pumpWidget(wrap(SizedBox(width: 380, height: 800, child: panel(onCheckout: () => checkedOut++))));
+      await tester.pumpWidget(
+        wrap(
+          SizedBox(
+            width: 380,
+            height: 800,
+            child: panel(onCheckout: () => checkedOut++),
+          ),
+        ),
+      );
       expect(find.text('Auriculares Pro 4'), findsOneWidget);
       expect(find.text('2'), findsOneWidget);
-      // Con mode `order` el botón dice «Crear pedido» (antes «Cobrar»).
-      expect(find.text('Crear pedido'), findsOneWidget);
-      await tester.tap(find.text('Crear pedido'));
+      final checkout = find.byTooltip('Crear pedido');
+      expect(checkout, findsOneWidget);
+      expect(find.textContaining('1,800'), findsWidgets);
+      await tester.tap(checkout);
       expect(checkedOut, 1);
     });
 
-    testWidgets('los botones de cantidad y quitar llaman al manejador real', (tester) async {
+    testWidgets('los botones de cantidad y quitar llaman al manejador real', (
+      tester,
+    ) async {
       desktopSurface(tester);
       final changes = <int>[];
       var removed = 0;
       final current = line();
-      await tester.pumpWidget(wrap(SizedBox(
-        width: 380,
-        height: 700,
-        child: panel(
-          lines: [current],
-          onQuantity: (_, delta) => changes.add(delta),
-          onRemove: (_) => removed++,
+      await tester.pumpWidget(
+        wrap(
+          SizedBox(
+            width: 380,
+            height: 700,
+            child: panel(
+              lines: [current],
+              onQuantity: (_, delta) => changes.add(delta),
+              onRemove: (_) => removed++,
+            ),
+          ),
         ),
-      )));
+      );
       await tester.tap(find.byIcon(Icons.add_rounded).last);
-      await tester.tap(find.byIcon(Icons.remove_rounded));
-      await tester.tap(find.byIcon(Icons.close_rounded));
+      await tester.tap(find.byIcon(Icons.remove_rounded).first);
+      await tester.tap(find.byIcon(Icons.remove_circle_outline_rounded));
       expect(changes, containsAll(<int>[1, -1]));
       expect(removed, 1);
     });
 
     testWidgets('ticket vacío muestra el aviso', (tester) async {
       desktopSurface(tester);
-      await tester.pumpWidget(wrap(SizedBox(width: 380, height: 800, child: panel(lines: const []))));
+      await tester.pumpWidget(
+        wrap(SizedBox(width: 380, height: 800, child: panel(lines: const []))),
+      );
       expect(find.textContaining('El ticket está vacío'), findsOneWidget);
     });
   });

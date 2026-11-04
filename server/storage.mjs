@@ -45,12 +45,15 @@ export const ALLOWED_MIME = Object.freeze({
   'audio/webm': 'webm',
   'audio/wav': 'wav',
   'application/pdf': 'pdf',
+  'video/mp4': 'mp4',
+  'video/3gpp': '3gp',
 });
 
 /** Límites duros (se validan ANTES de subir a S3). */
 export const LIMITS = Object.freeze({
   imageMaxBytes: 5 * 1024 * 1024,
   audioMaxBytes: 16 * 1024 * 1024,
+  videoMaxBytes: 16 * 1024 * 1024,
   audioMaxSeconds: 300,
   /*
    * DOCUMENTOS (un PDF de factura, por ejemplo). WhatsApp admite hasta 100 MB,
@@ -83,7 +86,10 @@ export function sniffMime(buffer) {
   if (b.slice(0, 4).toString('ascii') === 'fLaC') return null; // FLAC: no lo acepta Meta
   if (b.slice(4, 8).toString('ascii') === 'ftyp') {
     const brand = b.slice(8, 12).toString('ascii');
-    return brand.startsWith('M4A') || brand.startsWith('mp4') ? 'audio/mp4' : 'audio/mp4';
+    if (brand.startsWith('M4A') || brand.startsWith('M4B') || brand.startsWith('M4P')) return 'audio/mp4';
+    if (brand.startsWith('3g')) return 'video/3gpp';
+    if (['isom', 'iso2', 'iso6', 'mp41', 'mp42', 'avc1', 'dash', 'MSNV', 'M4V '].includes(brand)) return 'video/mp4';
+    return null;
   }
   if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return 'audio/webm'; // webm/matroska: se convierte
   if (b[0] === 0xff && (b[1] & 0xe0) === 0xe0) return 'audio/mpeg';

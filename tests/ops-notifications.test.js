@@ -18,7 +18,6 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { startCrmServer } from '../server/crm-server.mjs';
-import { opsDeadlineTick } from '../server/ops/notify.mjs';
 
 const TOKEN = 'ops-stage-c-token';
 const APP_SECRET = 'ops-stage-c-secret';
@@ -263,22 +262,14 @@ describe('avisos internos', () => {
     const ticket = await newTicket({ title: 'Entrega con plazo vencido', assignedUserId: agentId, dueAt: past });
     const before = (await notificationsOf(agentId, 'OPS_TICKET_DUE')).length;
 
-    const first = await opsDeadlineTick({
-      ctx: app.ctx,
-      deps: { notify: (input) => app.notifyUser(input) },
-      now,
-    });
+    const first = (await app.scheduler.tick()).deadline;
     expect(first.notified).toBeGreaterThan(0);
     const after = (await notificationsOf(agentId, 'OPS_TICKET_DUE')).length;
     expect(after).toBe(before + 1);
     expect((await notificationsOf(agentId, 'OPS_TICKET_DUE')).at(-1).data.ticket_id).toBe(ticket.id);
 
     /* Segunda pasada: el plazo YA se avisó. */
-    const second = await opsDeadlineTick({
-      ctx: app.ctx,
-      deps: { notify: (input) => app.notifyUser(input) },
-      now,
-    });
+    const second = (await app.scheduler.tick()).deadline;
     expect(second.notified).toBe(0);
     expect((await notificationsOf(agentId, 'OPS_TICKET_DUE')).length).toBe(after);
   });

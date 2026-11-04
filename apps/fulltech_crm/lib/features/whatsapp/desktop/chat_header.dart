@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/crm_tokens.dart';
+import '../../../data/models/crm_models.dart';
 import '../../common/pwa_icon.dart';
 import 'chat_desktop_theme.dart';
+import 'ai_agent_menus.dart';
 
 /// Encabezado del hilo: versión fina (46 px) sin foto, con la información
 /// compacta y las acciones a la derecha.
@@ -17,6 +19,19 @@ class ChatHeader extends StatelessWidget {
     required this.menu,
     this.onCall,
     this.onNewMessage,
+    this.onOrders,
+    this.aiEnabled = false,
+    this.aiLoaded = false,
+    this.aiBusy = false,
+    this.aiUnavailable = false,
+    this.onToggleAi,
+    this.onSelectAiMode,
+    this.aiMode = 'inherit',
+    this.aiGlobalEnabled = false,
+    this.aiTooltip = 'Asistente IA',
+    this.aiConversation,
+    this.onOpenAiAssistant,
+    this.onProfile,
     this.searching = false,
     this.searchController,
     this.onSearchChanged,
@@ -30,6 +45,23 @@ class ChatHeader extends StatelessWidget {
 
   /// Abre el diálogo de nuevo mensaje (crear/recuperar cliente por teléfono).
   final VoidCallback? onNewMessage;
+
+  /// Carrito: pedidos pendientes e historial del cliente del hilo.
+  final VoidCallback? onOrders;
+  final bool aiEnabled;
+  final bool aiLoaded;
+  final bool aiBusy;
+  final bool aiUnavailable;
+  final VoidCallback? onToggleAi;
+  final ValueChanged<String>? onSelectAiMode;
+  final String aiMode;
+  final bool aiGlobalEnabled;
+  final String aiTooltip;
+  final Conversation? aiConversation;
+  final VoidCallback? onOpenAiAssistant;
+
+  /// Ficha del cliente del hilo.
+  final VoidCallback? onProfile;
   final bool searching;
   final TextEditingController? searchController;
   final ValueChanged<String>? onSearchChanged;
@@ -78,6 +110,41 @@ class ChatHeader extends StatelessWidget {
                     ],
                   ),
           ),
+          if (onOrders != null)
+            _HeaderButton(
+              icon: Icons.shopping_cart_rounded,
+              tooltip: 'Pedidos del cliente',
+              onTap: onOrders!,
+              size: 40,
+              iconSize: 21,
+              tint: const Color(0xFFB77900),
+              background: const Color(0xFFF59E0B).withValues(alpha: 0.16),
+            ),
+          AiConversationMenu(
+            conversationName: name,
+            conversation: aiConversation,
+            enabled: aiEnabled,
+            loaded: aiLoaded,
+            busy: aiBusy,
+            unavailable: aiUnavailable,
+            tooltip: aiTooltip,
+            onRetry: onToggleAi,
+            onSelectMode: onSelectAiMode,
+            mode: aiMode,
+            globalEnabled: aiGlobalEnabled,
+            onOpenAssistant: onOpenAiAssistant,
+          ),
+          if (onProfile != null)
+            _HeaderButton(
+              icon: Icons.person_rounded,
+              tooltip: 'Perfil del cliente',
+              onTap: onProfile!,
+              size: 40,
+              iconSize: 21,
+              tint: c.accent,
+              background: c.accent.withValues(alpha: 0.12),
+            ),
+          /* La lupa y el teléfono van JUNTOS, al final de la fila. */
           if (onToggleSearch != null)
             _HeaderButton(
               asset: PwaIcons.search,
@@ -171,6 +238,10 @@ class _HeaderButton extends StatefulWidget {
     this.icon,
     this.asset,
     this.highlighted = false,
+    this.size = 30,
+    this.iconSize = 18,
+    this.tint,
+    this.background,
   });
 
   final IconData? icon;
@@ -181,6 +252,13 @@ class _HeaderButton extends StatefulWidget {
   /// Acento suave para la acción principal (nuevo mensaje).
   final bool highlighted;
 
+  /// Lado del botón y tamaño del icono. Los de pedidos y ficha son más grandes.
+  final double size;
+  final double iconSize;
+
+  /// Color propio del icono y fondo propio (pedidos va en ámbar).
+  final Color? tint;
+  final Color? background;
   @override
   State<_HeaderButton> createState() => _HeaderButtonState();
 }
@@ -191,7 +269,11 @@ class _HeaderButtonState extends State<_HeaderButton> {
   @override
   Widget build(BuildContext context) {
     final c = ChatPalette.of(context);
-    final tint = widget.highlighted ? c.accent : (_hovered ? c.textPrimary : c.textSecondary);
+    final base = widget.tint ?? (widget.highlighted ? c.accent : (_hovered ? c.textPrimary : c.textSecondary));
+    final ownBackground = widget.background;
+    final background = ownBackground != null
+        ? (_hovered ? Color.alphaBlend(Colors.black.withValues(alpha: 0.06), ownBackground) : ownBackground)
+        : (_hovered ? c.rowHover : Colors.transparent);
     return Tooltip(
       message: widget.tooltip,
       waitDuration: const Duration(milliseconds: 400),
@@ -201,19 +283,19 @@ class _HeaderButtonState extends State<_HeaderButton> {
         onExit: (_) => setState(() => _hovered = false),
         child: InkWell(
           onTap: widget.onTap,
-          borderRadius: BorderRadius.circular(7),
+          borderRadius: BorderRadius.circular(10),
           child: Container(
-            width: 30,
-            height: 30,
+            width: widget.size,
+            height: widget.size,
             margin: const EdgeInsets.only(left: 4),
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(7),
-              color: _hovered ? c.rowHover : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+              color: background,
             ),
             child: widget.asset != null
-                ? PwaIcon(widget.asset!, size: 15, color: tint)
-                : Icon(widget.icon, size: 18, color: tint),
+                ? PwaIcon(widget.asset!, size: widget.iconSize - 3, color: base)
+                : Icon(widget.icon, size: widget.iconSize, color: base),
           ),
         ),
       ),

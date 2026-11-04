@@ -110,8 +110,9 @@ class _LiveLifecycleState extends State<_LiveLifecycle> with WidgetsBindingObser
   Widget build(BuildContext context) => widget.child;
 }
 
-/// Arranque: solo el logo, como la PWA (el panel abre en décimas).
-class _BootSplash extends StatelessWidget {  const _BootSplash();
+/// Arranque: solo el logo SIN fondo, como la PWA (el panel abre en décimas).
+class _BootSplash extends StatelessWidget {
+  const _BootSplash();
 
   @override
   Widget build(BuildContext context) {
@@ -122,17 +123,13 @@ class _BootSplash extends StatelessWidget {  const _BootSplash();
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 78,
-              height: 78,
-              decoration: BoxDecoration(
-                color: p.primary,
-                borderRadius: BorderRadius.circular(22),
-              ),
-              alignment: Alignment.center,
-              child: const Text('FT', style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900)),
+            Image.asset(
+              PwaIcons.brandMark,
+              width: 104,
+              height: 104,
+              filterQuality: FilterQuality.high,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             Text('FullTECH CRM', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: p.ink)),
             const SizedBox(height: 18),
             SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.2, color: p.primary)),

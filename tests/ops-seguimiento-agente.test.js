@@ -34,6 +34,7 @@ const ADMIN = { username: 'w.admin', password: 'W-Admin-123', name: 'Ana Admin' 
 const OPERADOR = { username: 'w.op', password: 'W-Oper-123', name: 'Oscar Operador' };
 /** Lo que el WhatsApp simulado "enviaría": la UAT comprueba que no sale nada real. */
 const sent = [];
+const futureDate = (days = 7) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 
 let tmpDir;
 let app;
@@ -170,7 +171,7 @@ describe('propuestas con aprobación', () => {
       actor: adminActor(),
       can: canAdmin(),
       action: 'followup.create',
-      params: { customerId, reason: 'Confirmar la recompra', date: '2026-11-02' },
+      params: { customerId, reason: 'Confirmar la recompra', date: futureDate() },
       origin: 'chat',
     });
     expect(result.ok).toBe(true);
@@ -211,7 +212,7 @@ describe('propuestas con aprobación', () => {
   });
 
   it('repetir la misma propuesta devuelve la que ya está pendiente', async () => {
-    const params = { customerId, reason: 'Llamada de control', date: '2026-11-03' };
+    const params = { customerId, reason: 'Llamada de control', date: futureDate() };
     const first = await proposeWork({ ctx: app.ctx, actor: adminActor(), can: canAdmin(), action: 'followup.create', params });
     const second = await proposeWork({ ctx: app.ctx, actor: adminActor(), can: canAdmin(), action: 'followup.create', params });
     expect(second.duplicate).toBe(true);
@@ -224,7 +225,7 @@ describe('propuestas con aprobación', () => {
       actor: adminActor(),
       can: canAdmin(),
       action: 'followup.create',
-      params: { customerId, reason: 'Propuesta con dos aprobadores', date: '2026-11-08' },
+      params: { customerId, reason: 'Propuesta con dos aprobadores', date: futureDate(8) },
     });
     const before = (await app.ctx.db.list('followups', { limit: 50 })).length;
     /* La primera se queda decidiendo (no se espera); la segunda llega antes. */
@@ -257,7 +258,7 @@ describe('propuestas con aprobación', () => {
       actor: adminActor(),
       can: canAdmin(),
       action: 'followup.create',
-      params: { customerId, reason: 'Propuesta que se rechaza', date: '2026-11-04' },
+      params: { customerId, reason: 'Propuesta que se rechaza', date: futureDate(9) },
     });
     const rejected = await decideWorkProposal({
       ctx: app.ctx,
@@ -431,7 +432,7 @@ describe('propuestas con aprobación', () => {
       actor: adminActor(),
       can: canAdmin(),
       action: 'followup.create',
-      params: { customerId, reason: 'Propuesta vieja', date: '2026-11-05' },
+      params: { customerId, reason: 'Propuesta vieja', date: futureDate(10) },
     });
     await app.ctx.db.update('ops_agent_approvals', proposal.proposal.id, { expires_at: '2020-01-01T00:00:00.000Z' });
     const expired = await decideWorkProposal({
@@ -461,7 +462,7 @@ describe('propuestas con aprobación', () => {
       actor: operadorActor(),
       can: canOperador(),
       action: 'followup.create',
-      params: { customerId: otherCustomer, reason: 'No autorizado', date: '2026-11-06' },
+      params: { customerId: otherCustomer, reason: 'No autorizado', date: futureDate(11) },
     });
     if (!operatorVisible(otherCustomer)) {
       expect(proposal.ok).toBe(false);
@@ -484,9 +485,9 @@ describe('lo que propone el modelo', () => {
       raw: {
         reply: 'Tienes dos cosas pendientes.',
         proposals: [
-          { action: 'followup.create', params: { customerId, reason: 'Recompra de noviembre', date: '2026-11-07' }, why: 'compró hace un mes' },
+          { action: 'followup.create', params: { customerId, reason: 'Recompra de noviembre', date: futureDate(12) }, why: 'compró hace un mes' },
           { action: 'inventar_cosa', params: {}, why: 'no existe' },
-          { action: 'followup.create', params: { customerId: 'no-existe', reason: 'x', date: '2026-11-07' }, why: 'cliente inventado' },
+          { action: 'followup.create', params: { customerId: 'no-existe', reason: 'x', date: futureDate(12) }, why: 'cliente inventado' },
           { action: 'schedule.create', params: { customerId, text: 'Recordatorio', scheduledAt: '2020-01-01T10:00:00.000Z' }, why: 'fecha pasada' },
         ],
       },

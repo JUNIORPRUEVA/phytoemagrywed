@@ -132,15 +132,16 @@ abstract final class PosMetrics {
   /// Barra superior con borde inferior.
   static const double toolbarHeight = 56;
 
-  /// Ancho del panel de venta (carrito): 546 px en la captura ≈ 28 % del ancho.
-  static double cartWidth(double screenWidth) => (screenWidth * 0.28).clamp(320.0, 480.0);
+  /// Da espacio al catálogo sin comprimir importes y cantidades del ticket.
+  static double cartWidth(double availableWidth) =>
+      (availableWidth * 0.38).clamp(430.0, 520.0);
 
   /// Columna estrecha de categorías a la izquierda de la rejilla.
   static const double railWidth = 84;
 
   /// Tarjeta de producto.
-  static const double cardHeight = 216;
-  static const double cardMaxWidth = 200;
+  static const double cardHeight = 214;
+  static const double cardMaxWidth = 160;
   static const double gridGap = 10;
 
   static const double searchHeight = 38;

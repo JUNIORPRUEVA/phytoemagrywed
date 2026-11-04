@@ -175,14 +175,14 @@ export const COLLECTIONS = Object.freeze({
    * llave para no duplicar la misma tienda escrita de dos formas.
    */
   suppliers: {
-    indexed: { name: 'text', name_key: 'text', active: 'text', updated_at: 'text', created_at: 'text' },
+    indexed: { company_id: 'text', name: 'text', name_key: 'text', active: 'text', updated_at: 'text', created_at: 'text' },
   },
   /*
    * PRODUCTO ↔ TIENDA: costo en ESA tienda, disponibilidad verificada y tiempo
    * de recogida. `link_key` (`producto:tienda`) es único: no se repite el par.
    */
   product_suppliers: {
-    indexed: { product_id: 'text', supplier_id: 'text', link_key: 'text', updated_at: 'text' },
+    indexed: { company_id: 'text', product_id: 'text', supplier_id: 'text', link_key: 'text', updated_at: 'text' },
     unique: ['link_key'],
   },
   /*
@@ -192,6 +192,13 @@ export const COLLECTIONS = Object.freeze({
    */
   order_pickups: {
     indexed: { order_id: 'text', supplier_id: 'text', status: 'text', idempotency_key: 'text', created_at: 'text' },
+    unique: ['idempotency_key'],
+  },
+  /* Mensajes operativos de repartidor ↔ operador sobre una tienda concreta.
+   * No son el chat comercial ni envíos automáticos al teléfono privado. */
+  store_contact_messages: {
+    indexed: { company_id: 'text', order_id: 'text', supplier_id: 'text',
+      courier_account_id: 'text', created_at: 'text', idempotency_key: 'text' },
     unique: ['idempotency_key'],
   },
   /*
@@ -215,6 +222,31 @@ export const COLLECTIONS = Object.freeze({
   },
   courier_company_grants: {
     indexed: { courier_account_id: 'text', company_id: 'text', active: 'text', updated_at: 'text' },
+  },
+  /* Estado operativo por empresa; nunca sustituye la autorización de la cuenta. */
+  courier_availability: {
+    indexed: { courier_account_id: 'text', company_id: 'text', available: 'text', updated_at: 'text' },
+  },
+  courier_compensation_policies: {
+    indexed: { company_id: 'text', active: 'text', updated_at: 'text' },
+    unique: ['company_id'],
+  },
+  delivery_customer_policies: {
+    indexed: { company_id: 'text', active: 'text', updated_at: 'text' },
+    unique: ['company_id'],
+  },
+  delivery_quotes: {
+    indexed: { company_id: 'text', supplier_id: 'text', expires_at: 'text', created_at: 'text' },
+  },
+  courier_earnings: {
+    indexed: { company_id: 'text', courier_account_id: 'text', order_id: 'text', kind: 'text',
+      idempotency_key: 'text', created_at: 'text' },
+    unique: ['idempotency_key'],
+  },
+  courier_payouts: {
+    indexed: { company_id: 'text', courier_account_id: 'text', state: 'text',
+      idempotency_key: 'text', created_at: 'text' },
+    unique: ['idempotency_key'],
   },
   /*
    * ALCANCE ADMINISTRATIVO POR EMPRESA (`crm_company_grants`).

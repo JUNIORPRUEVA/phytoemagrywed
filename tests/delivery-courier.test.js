@@ -40,6 +40,7 @@ function makeCtx({ contacts = [COURIER], orders = [], template = { ok: true, tem
   const state = { orders: orders.map((row) => ({ ...row })), sent: [], texts: [], audits: [], updates: [], recorded: [] };
   const ctx = {
     clock: () => new Date('2026-10-18T10:00:00.000Z'),
+    db: { list: async () => [] },
     settings: { read: async (key) => (key === 'delivery_contacts' ? { value: contacts } : null) },
     whatsapp: {
       enabled: true,

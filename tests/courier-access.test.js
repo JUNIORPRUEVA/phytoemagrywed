@@ -114,6 +114,126 @@ afterEach(async () => {
 });
 
 describe('identidad del repartidor', () => {
+  it('guarda disponibilidad por empresa y rechaza identidad o valor no autorizado', async () => {
+    const account = await createCourierAccount({
+      kind: 'EXTERNAL', phone: EXTERNAL_PHONE, displayName: 'Mensajero Externo',
+      contactId: 'contact-ext', appAccess: true, pin: '123456',
+    });
+    expect(account.status).toBe(201);
+    const session = await login(EXTERNAL_PHONE, '123456');
+    const token = session.data.token;
+    expect((await courierCall('/api/courier/availability', { method: 'POST', body: { available: true } })).status).toBe(401);
+    expect((await courierCall('/api/courier/availability', { token, method: 'POST', body: { available: 'true' } })).status).toBe(422);
+    const on = await courierCall('/api/courier/availability', { token, method: 'POST', body: { available: true } });
+    expect(on.status).toBe(200);
+    expect(on.data.available).toBe(true);
+    expect(on.data.company_id).toBe('phytoemagry');
+    expect((await courierCall('/api/courier/availability', { token })).data.available).toBe(true);
+    expect((await courierCall('/api/courier/me', { token })).data.availability.available).toBe(true);
+    expect((await courierCall('/api/courier/availability', { token, companyId: 'fulltech' })).status).toBe(403);
+    await app.close();
+    app = await startCrmServer({
+      port: 0, host: '127.0.0.1', dataFile: path.join(dir, 'courier.sqlite'),
+      token: TOKEN, quiet: true, schedulerEnabled: false,
+    });
+    expect((await courierCall('/api/courier/availability', { token })).data.available).toBe(true);
+    const off = await courierCall('/api/courier/availability', { token, method: 'POST', body: { available: false } });
+    expect(off.data.available).toBe(false);
+    expect((await courierCall('/api/courier/availability', { token })).data.available).toBe(false);
+    expect((await courierCall('/api/courier/me', { token })).data.capabilities.can_accept).toBe(false);
+  });
+
+  it('entrega recogida, GPS confirmado y requisito de código sin exponer el hash', async () => {
+    const orderId = await createOrder({ phone: '8095557991' });
+    expect((await call(`orders/${orderId}/courier/assign`, { contactPhone: EXTERNAL_PHONE })).status).toBe(200);
+    const item = await app.ctx.store.getAdmin(orderId);
+    const order = JSON.parse(item.order_json);
+    order.delivery = {
+      ...order.delivery,
+      pickup: { name: 'Almacén', address: 'Calle 1', latitude: 18.48, longitude: -69.9,
+        phone: '8095559999', whatsapp: '+18095559999' },
+      location: { address: 'Calle 2', latitude: 18.5, longitude: -69.91, source_location_id: 'loc-prueba' },
+      route: { meters: 2500, duration_seconds: 600, provider: 'fixture-road', internal_token: 'privado' },
+      proof: { required: true, hash: 'secreto', expires_at: '2027-01-01T00:00:00.000Z' },
+    };
+    await app.ctx.store.update(orderId, { orderJson: JSON.stringify(order) });
+    await createCourierAccount({ kind: 'EXTERNAL', phone: EXTERNAL_PHONE,
+      displayName: 'Mensajero Externo', contactId: 'contact-ext', appAccess: true, pin: '123456' });
+    const session = await login(EXTERNAL_PHONE, '123456');
+    const detail = await courierCall(`/api/courier/orders/${orderId}`, { token: session.data.token });
+    expect(detail.status).toBe(200);
+    expect(detail.data.order.pickup).toMatchObject({ name: 'Almacén', latitude: 18.48, longitude: -69.9 });
+    expect(detail.data.order.delivery).toMatchObject({ latitude: 18.5, longitude: -69.91, source_location_id: 'loc-prueba' });
+    expect(detail.data.order.delivery.route).toEqual({ meters: 2500, duration_seconds: 600, provider: 'fixture-road' });
+    expect(detail.data.order.proof.required).toBe(true);
+    expect(JSON.stringify(detail.data)).not.toContain('secreto');
+    expect(JSON.stringify(detail.data)).not.toContain('privado');
+    expect(JSON.stringify(detail.data)).not.toContain('8095559999');
+  });
+
+  it('media el contacto con la tienda en un hilo operativo sin revelar su teléfono', async () => {
+    const supplier = (await call('suppliers', { company_id: 'phytoemagry',
+      name: 'Tienda Operativa', address: 'Calle 7', lat: 18.48, lng: -69.9,
+      phone: '8095559999', whatsapp: '+18095559999' })).data.supplier;
+    const orderId = await createOrder({ phone: '8095557981' });
+    expect((await call(`orders/${orderId}/courier/assign`, { contactPhone: EXTERNAL_PHONE })).status).toBe(200);
+    const row = await app.ctx.store.getAdmin(orderId);
+    const order = JSON.parse(row.order_json);
+    order.delivery.pickup = { supplier_id: supplier.id, name: supplier.name,
+      address: supplier.address, latitude: supplier.lat, longitude: supplier.lng };
+    await app.ctx.store.update(orderId, { orderJson: JSON.stringify(order) });
+    await createCourierAccount({ kind: 'EXTERNAL', phone: EXTERNAL_PHONE,
+      displayName: 'Mensajero Externo', contactId: 'contact-ext', appAccess: true, pin: '123456' });
+    const token = (await login(EXTERNAL_PHONE, '123456')).data.token;
+    expect((await courierCall(`/api/courier/orders/${orderId}`, { token }))
+      .data.order.store_contact_available).toBe(true);
+    const contactPath = `/api/courier/orders/${orderId}/store-contact`;
+    const initial = await courierCall(contactPath, { token });
+    expect(initial.status).toBe(200);
+    expect(initial.data).toMatchObject({ mediated: true, store: { name: 'Tienda Operativa' }, messages: [] });
+    expect(JSON.stringify(initial.data)).not.toContain('8095559999');
+    const sent = await courierCall(contactPath, { token, method: 'POST', body: {
+      message: '¿Está listo para recoger?', idempotencyKey: 'contacto-prueba-1' } });
+    expect(sent.status).toBe(201);
+    expect((await courierCall(contactPath, { token, method: 'POST', body: {
+      message: '¿Está listo para recoger?', idempotencyKey: 'contacto-prueba-1' } })).data.duplicate).toBe(true);
+    expect((await courierCall(contactPath, { token, method: 'POST', body: {
+      message: 'x'.repeat(1001), idempotencyKey: 'contacto-prueba-largo' } })).status).toBe(422);
+    expect((await call(`orders/${orderId}/store-contact`)).data.messages).toHaveLength(1);
+    expect((await call(`orders/${orderId}/store-contact`, { message: 'Estamos verificando con la tienda.',
+      idempotencyKey: 'contacto-operador-1' })).status).toBe(201);
+    const thread = await courierCall(contactPath, { token });
+    expect(thread.data.messages.map((message) => message.role)).toEqual(['courier', 'operator']);
+    expect(JSON.stringify(thread.data)).not.toContain('8095559999');
+    expect((await courierCall(contactPath, { token: 'invalid' })).status).toBe(401);
+    await app.close();
+    app = await startCrmServer({ port: 0, host: '127.0.0.1',
+      dataFile: path.join(dir, 'courier.sqlite'), token: TOKEN,
+      quiet: true, schedulerEnabled: false });
+    const afterRestart = await courierCall(contactPath, { token });
+    expect(afterRestart.status).toBe(200);
+    expect(afterRestart.data.messages).toHaveLength(2);
+    await createCourierAccount({ kind: 'EXTERNAL', phone: OTHER_PHONE,
+      displayName: 'Otro Mensajero', contactId: 'contact-other', appAccess: true, pin: '123456' });
+    expect((await call(`orders/${orderId}/courier/assign`, { contactPhone: OTHER_PHONE })).status).toBe(200);
+    const otherToken = (await login(OTHER_PHONE, '123456')).data.token;
+    expect((await courierCall(contactPath, { token })).status).toBe(404);
+    expect((await courierCall(contactPath, { token: otherToken })).data.messages).toEqual([]);
+    expect((await call(`orders/${orderId}/store-contact`)).data.messages).toHaveLength(2);
+    expect((await call(`orders/${orderId}/store-contact`, { message: 'Nueva asignación.',
+      idempotencyKey: 'contacto-operador-2' })).status).toBe(201);
+    expect((await courierCall(contactPath, { token: otherToken })).data.messages)
+      .toMatchObject([{ role: 'operator', text: 'Nueva asignación.' }]);
+    expect((await call(`orders/${orderId}/store-contact`)).data.messages).toHaveLength(3);
+    const closedRow = await app.ctx.store.getAdmin(orderId);
+    const closedOrder = JSON.parse(closedRow.order_json);
+    closedOrder.delivery.lifecycle = 'REJECTED';
+    await app.ctx.store.update(orderId, { orderJson: JSON.stringify(closedOrder) });
+    expect((await courierCall(contactPath, { token: otherToken })).data.writable).toBe(false);
+    expect((await courierCall(contactPath, { token: otherToken, method: 'POST', body: {
+      message: 'Después del rechazo', idempotencyKey: 'contacto-cerrado-1' } })).status).toBe(409);
+  });
+
   it('un contacto guardado no entra solo: hace falta autorización explícita', async () => {
     const denied = await login(EXTERNAL_PHONE, '123456');
     expect(denied.status).toBe(401);
@@ -256,6 +376,9 @@ describe('identidad del repartidor', () => {
     const fulltechList = await courierCall('/api/courier/orders', { token, companyId: 'fulltech' });
     expect(phytoList.data.orders.map((row) => row.id)).toEqual([phyto]);
     expect(fulltechList.data.orders.map((row) => row.id)).toEqual([fulltech]);
+    expect((await courierCall('/api/courier/availability', { token, companyId: 'fulltech', method: 'POST', body: { available: true } })).status).toBe(200);
+    expect((await courierCall('/api/courier/availability', { token, companyId: 'fulltech' })).data.available).toBe(true);
+    expect((await courierCall('/api/courier/availability', { token, companyId: 'phytoemagry' })).data.available).toBe(false);
     expect((await courierCall(`/api/courier/orders/${ambiguous}`, { token, companyId: 'fulltech' })).status).toBe(404);
     expect((await courierCall(`/api/courier/orders/${fulltech}`, { token, companyId: 'phytoemagry' })).status).toBe(404);
     expect((await courierCall('/api/courier/orders', { token, companyId: 'otra-empresa' })).status).toBe(403);

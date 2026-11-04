@@ -4,21 +4,18 @@ import '../../../core/theme/crm_tokens.dart';
 import '../../common/pwa_icon.dart';
 import 'chat_desktop_theme.dart';
 
-/// Columna lateral de acciones del chat (todo el alto, ~20 % del ancho).
+/// Columna lateral de ACCIONES del chat (todo el alto, ~30 % del ancho).
 ///
-/// Reúne lo que antes estaba repartido en menús: el **asistente de IA**
-/// (corregir la ortografía del mensaje que se está escribiendo y sugerir una
-/// respuesta) y las **acciones comerciales** (crear pedido, cotización,
-/// plantilla, datos de pago, asignación, finalizar, recargar).
+/// Lo comercial y lo operativo: crear pedido, plantilla, datos para compartir,
+/// asignación, finalizar o recargar. Lo de la IA tiene su propia columna
+/// (`ChatAiPanel`) para no mezclar dos cosas que se usan en momentos distintos.
 class ChatOptionsPanel extends StatelessWidget {
   const ChatOptionsPanel({
     super.key,
     required this.width,
     required this.onClose,
-    required this.onProofread,
-    required this.onReplySuggestion,
-    required this.onAssistant,
     required this.onNewOrder,
+    required this.onNewQuote,
     required this.onTemplate,
     required this.onShareData,
     required this.onAssign,
@@ -26,28 +23,14 @@ class ChatOptionsPanel extends StatelessWidget {
     required this.onRefresh,
     this.onReconcile,
     required this.isResolved,
-    required this.onUseSuggestion,
-    required this.onDiscardSuggestion,
-    this.aiBusy = false,
-    this.aiOriginal = '',
-    this.aiSuggestion = '',
-    this.aiError = '',
   });
 
   final double width;
   final VoidCallback onClose;
 
-  /// Pide a la IA que corrija el texto del compositor.
-  final VoidCallback onProofread;
-
-  /// Pide a la IA una respuesta sugerida para el hilo.
-  final VoidCallback onReplySuggestion;
-
-  /// Abre el asistente contextual (misma ruta que el Centro IA del panel web).
-  final VoidCallback onAssistant;
-
   /// Abre Facturación para crear el pedido de este cliente.
   final VoidCallback onNewOrder;
+  final VoidCallback onNewQuote;
   final VoidCallback onTemplate;
   final VoidCallback onShareData;
   final VoidCallback onAssign;
@@ -57,14 +40,6 @@ class ChatOptionsPanel extends StatelessWidget {
   /// Conciliación de un envío de archivo cuyo resultado quedó en duda.
   final VoidCallback? onReconcile;
   final bool isResolved;
-
-  final VoidCallback onUseSuggestion;
-  final VoidCallback onDiscardSuggestion;
-
-  final bool aiBusy;
-  final String aiOriginal;
-  final String aiSuggestion;
-  final String aiError;
 
   @override
   Widget build(BuildContext context) {
@@ -115,56 +90,6 @@ class ChatOptionsPanel extends StatelessWidget {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(10, 12, 10, 16),
               children: [
-                _title(context, 'Asistente IA'),
-                _action(
-                  context,
-                  icon: Icons.auto_awesome_outlined,
-                  label: 'Corregir ortografía',
-                  hint: 'Revisa el mensaje que estás escribiendo',
-                  accent: true,
-                  onTap: onProofread,
-                ),
-                _action(
-                  context,
-                  icon: Icons.forum_outlined,
-                  label: 'Sugerir respuesta',
-                  hint: 'Propone una respuesta para este chat',
-                  accent: true,
-                  onTap: onReplySuggestion,
-                ),
-                _action(
-                  context,
-                  icon: Icons.psychology_alt_outlined,
-                  label: 'Asistente contextual',
-                  hint: 'Analiza el chat, el expediente y prepara la siguiente acción',
-                  accent: true,
-                  onTap: onAssistant,
-                ),
-                if (aiBusy)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: c.accent),
-                        ),
-                        const SizedBox(width: 8),
-                        Text('Pensando…', style: t.rowPreview.copyWith(fontSize: 12)),
-                      ],
-                    ),
-                  ),
-                if (aiError.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
-                    child: Text(
-                      aiError,
-                      style: t.rowPreview.copyWith(fontSize: 11.5, color: c.danger),
-                    ),
-                  ),
-                if (aiSuggestion.isNotEmpty) _suggestionCard(context),
-                const SizedBox(height: 6),
                 _title(context, 'Ventas'),
                 _action(
                   context,
@@ -172,6 +97,13 @@ class ChatOptionsPanel extends StatelessWidget {
                   label: 'Crear pedido',
                   hint: 'Abre Facturación con este cliente',
                   onTap: onNewOrder,
+                ),
+                _action(
+                  context,
+                  icon: Icons.request_quote_outlined,
+                  label: 'Crear cotización',
+                  hint: 'Abre el mismo editor sin cobrar',
+                  onTap: onNewQuote,
                 ),
                 _action(
                   context,
@@ -284,75 +216,6 @@ class ChatOptionsPanel extends StatelessWidget {
                   ),
               ],
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Tarjeta con la propuesta de la IA: nunca envía sola.
-  Widget _suggestionCard(BuildContext context) {
-    final c = ChatPalette.of(context);
-    final t = c.text;
-    return Container(
-      margin: const EdgeInsets.only(top: 4, bottom: 8),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: c.fieldBg,
-        borderRadius: BorderRadius.circular(9),
-        border: Border.all(color: c.divider),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (aiOriginal.isNotEmpty) ...[
-            Text(
-              aiOriginal,
-              style: t.rowPreview.copyWith(
-                fontSize: 11.5,
-                decoration: TextDecoration.lineThrough,
-                color: c.textSecondary,
-              ),
-            ),
-            const SizedBox(height: 6),
-          ],
-          Text(
-            aiSuggestion,
-            style: t.bubbleBody.copyWith(fontSize: 12.5, color: c.textPrimary),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: SizedBox(
-                  height: 30,
-                  child: FilledButton(
-                    onPressed: onUseSuggestion,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: c.accent,
-                      foregroundColor: Colors.white,
-                      padding: EdgeInsets.zero,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
-                    ),
-                    child: const Text('Usar', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: SizedBox(
-                  height: 30,
-                  child: TextButton(
-                    onPressed: onDiscardSuggestion,
-                    style: TextButton.styleFrom(
-                      foregroundColor: c.textSecondary,
-                      padding: EdgeInsets.zero,
-                    ),
-                    child: const Text('Descartar', style: TextStyle(fontSize: 12)),
-                  ),
-                ),
-              ),
-            ],
           ),
         ],
       ),

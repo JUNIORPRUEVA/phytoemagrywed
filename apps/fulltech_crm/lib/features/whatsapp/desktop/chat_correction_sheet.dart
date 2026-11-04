@@ -42,12 +42,23 @@ class _ChatCorrectionSheetState extends State<ChatCorrectionSheet> {
   void initState() {
     super.initState();
     _cambios = _local.edits;
+    /*
+     * La IA revisa SOLA en cuanto se abre el diálogo.
+     *
+     * Antes había que pulsar «Mejorar con IA»: quien no lo hacía solo veía la
+     * pasada local (espacios, mayúsculas, tildes del diccionario) y daba por
+     * hecho que la IA «solo mira mayúsculas». El servidor cachea 10 minutos por
+     * texto y mantiene el tope diario, así que abrir dos veces no gasta dos veces.
+     */
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _mejorarConIa();
+    });
   }
 
   Future<void> _mejorarConIa() async {
     setState(() {
       _iaCargando = true;
-      _iaEstado = '';
+      _iaEstado = 'Revisando con IA…';
     });
     try {
       final resultado = await widget.repository.proofread(
@@ -62,7 +73,7 @@ class _ChatCorrectionSheetState extends State<ChatCorrectionSheet> {
           return;
         }
         if (!resultado.hasChanges) {
-          _iaEstado = 'La IA no encontró nada más que corregir.';
+          _iaEstado = 'La IA revisó el texto y no encontró nada más que corregir.';
           return;
         }
         _propuesta = resultado.correctedText;

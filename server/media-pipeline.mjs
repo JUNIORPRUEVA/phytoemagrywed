@@ -36,17 +36,19 @@ function filenameForMime(filename, mimeType, fallback = 'archivo') {
 function limitFor(mediaType) {
   if (mediaType === 'image' || mediaType === 'sticker') return LIMITS.imageMaxBytes;
   if (mediaType === 'document') return LIMITS.documentMaxBytes;
+  if (mediaType === 'video') return LIMITS.videoMaxBytes;
   return LIMITS.audioMaxBytes;
 }
 
 /**
- * Familia de un MIME ya verificado por los bytes: imagen, documento o audio.
+ * Familia de un MIME ya verificado por los bytes: imagen, documento, video o audio.
  * Es la clase con la que se decide el límite de peso y el tipo que se envía.
  */
 function kindOfMime(mime) {
   const value = String(mime ?? '').toLowerCase();
   if (value.startsWith('image/')) return 'image';
   if (value === 'application/pdf') return 'document';
+  if (value.startsWith('video/')) return 'video';
   return 'audio';
 }
 
@@ -66,7 +68,7 @@ export function validateBinary(buffer, { declaredMime = null, expect = null } = 
     return {
       ok: false,
       code: 'unrecognized_type',
-      message: 'El contenido del archivo no es una imagen, un audio ni un PDF válidos.',
+      message: 'El contenido del archivo no es una imagen, un audio, un video ni un PDF válidos.',
     };
   }
   if (!isAllowedMime(real)) {
@@ -84,7 +86,7 @@ export function validateBinary(buffer, { declaredMime = null, expect = null } = 
       return {
         ok: false,
         code: 'wrong_kind',
-        message: expect === 'image' ? 'Eso no es una imagen.' : expect === 'audio' ? 'Eso no es un audio.' : 'Eso no es un PDF.',
+        message: expect === 'image' ? 'Eso no es una imagen.' : expect === 'audio' ? 'Eso no es un audio.' : expect === 'video' ? 'Eso no es un video.' : 'Eso no es un PDF.',
       };
     }
   }
@@ -169,7 +171,7 @@ export function createMediaPipeline(deps) {
     // 3) Validación real del contenido (MIME por bytes + tamaño).
     const valido = validateBinary(descarga.buffer, {
       declaredMime: descarga.declaredMimeType ?? descarga.mimeType,
-      expect: mediaType === 'image' || mediaType === 'sticker' ? 'image' : mediaType === 'document' ? null : 'audio',
+      expect: mediaType === 'image' || mediaType === 'sticker' ? 'image' : mediaType === 'document' ? 'document' : mediaType === 'video' ? 'video' : 'audio',
     });
     if (!valido.ok) {
       const marcado = await mediaStore.markFailed(row.id, { code: valido.code, message: valido.message });
@@ -236,12 +238,12 @@ export function createMediaPipeline(deps) {
    * fila queda en SENT con el `wa_message_id`: se completa la persistencia sin
    * volver a mandar nada.
    *
-   * @param {{ direction: 'image'|'audio'|'document', to: string, buffer: Buffer, declaredMime?: string|null,
+   * @param {{ direction: 'image'|'audio'|'document'|'video', to: string, buffer: Buffer, declaredMime?: string|null,
    *           caption?: string|null, filename?: string|null, conversationId: string|null,
    *           messageId?: string|null, idempotencyKey?: string|null, findExistingMessage?: Function }} input
    */
   async function processOutbound(input) {
-    const kind = input.direction === 'audio' ? 'audio' : input.direction === 'document' ? 'document' : 'image';
+    const kind = ['audio', 'document', 'video'].includes(input.direction) ? input.direction : 'image';
     const key = input.idempotencyKey ? String(input.idempotencyKey).slice(0, 80) : null;
 
     /** La operación ya salió: se devuelve lo que hay, sin tocar Meta. */
@@ -468,6 +470,8 @@ export function createMediaPipeline(deps) {
     const envio =
       kind === 'audio'
         ? await whatsappMedia.sendAudio(input.to, { mediaId: metaMediaId })
+        : kind === 'video'
+          ? await whatsappMedia.sendVideo(input.to, { mediaId: metaMediaId, caption: input.caption ?? null })
         : kind === 'document'
           ? await whatsappMedia.sendDocument(input.to, {
               mediaId: metaMediaId,

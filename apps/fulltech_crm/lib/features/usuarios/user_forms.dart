@@ -24,6 +24,7 @@ class NewUserForm {
     this.firstName = '',
     this.lastName = '',
     this.personalPhone = '',
+    this.fleetPhone = '',
   });
 
   final String username;
@@ -33,6 +34,7 @@ class NewUserForm {
   final String firstName;
   final String lastName;
   final String personalPhone;
+  final String fleetPhone;
 }
 
 /// Devuelve los datos o `null` si se cancela.
@@ -44,115 +46,187 @@ Future<NewUserForm?> showNewUserDialog(BuildContext context) {
   final firstName = TextEditingController();
   final lastName = TextEditingController();
   final phone = TextEditingController();
+  final fleetPhone = TextEditingController();
   var role = 'AGENT';
   String? error;
+  var disposalScheduled = false;
 
   return showDialog<NewUserForm>(
     context: context,
-    builder: (dialogContext) => StatefulBuilder(
-      builder: (dialogContext, setDialogState) => AlertDialog(
-        title: const Text('Nuevo usuario'),
-        content: SizedBox(
-          width: 440,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: username,
-                  autofocus: true,
-                  decoration: const InputDecoration(labelText: 'Usuario (correo)'),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: displayName,
-                  maxLength: 80,
-                  decoration: const InputDecoration(labelText: 'Nombre visible'),
-                ),
-                DropdownButtonFormField<String>(
-                  initialValue: role,
-                  decoration: const InputDecoration(labelText: 'Rol'),
-                  items: const [
-                    DropdownMenuItem(value: 'ADMIN', child: Text('Administración')),
-                    DropdownMenuItem(value: 'AGENT', child: Text('Agente')),
-                    DropdownMenuItem(value: 'OPERADOR', child: Text('Operador')),
-                    DropdownMenuItem(value: 'DELIVERY', child: Text('Reparto')),
-                    DropdownMenuItem(value: 'SUPPLIER', child: Text('Proveedor')),
-                  ],
-                  onChanged: (value) => setDialogState(() => role = value ?? 'AGENT'),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(child: TextField(controller: firstName, decoration: const InputDecoration(labelText: 'Nombre'))),
-                    const SizedBox(width: 8),
-                    Expanded(child: TextField(controller: lastName, decoration: const InputDecoration(labelText: 'Apellido'))),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: phone,
-                  keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(labelText: 'Teléfono personal (opcional)'),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: password,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Contraseña inicial'),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'La contraseña la elige quien crea la cuenta y se le comunica por un canal seguro. '
-                  'El CRM no muestra contraseñas ni hashes.',
-                  style: TextStyle(fontSize: 11.5, color: p.inkSecondary),
-                ),
-                if (error != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(error!, style: TextStyle(fontSize: 12.5, color: p.danger)),
+    builder: (dialogContext) {
+      if (!disposalScheduled) {
+        disposalScheduled = true;
+        ModalRoute.of(dialogContext)?.completed.then((_) {
+          for (final controller in [
+            username,
+            password,
+            displayName,
+            firstName,
+            lastName,
+            phone,
+            fleetPhone,
+          ]) {
+            controller.dispose();
+          }
+        });
+      }
+      return StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Nuevo usuario'),
+          content: SizedBox(
+            width: 440,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: username,
+                    autofocus: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Usuario (correo)',
+                    ),
                   ),
-              ],
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: displayName,
+                    maxLength: 80,
+                    decoration: const InputDecoration(
+                      labelText: 'Nombre visible',
+                    ),
+                  ),
+                  DropdownButtonFormField<String>(
+                    initialValue: role,
+                    decoration: const InputDecoration(labelText: 'Rol'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'ADMIN',
+                        child: Text('Administración'),
+                      ),
+                      DropdownMenuItem(value: 'AGENT', child: Text('Agente')),
+                      DropdownMenuItem(
+                        value: 'OPERADOR',
+                        child: Text('Operador'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'DELIVERY',
+                        child: Text('Reparto'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'SUPPLIER',
+                        child: Text('Proveedor'),
+                      ),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => role = value ?? 'AGENT'),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: firstName,
+                          decoration: const InputDecoration(
+                            labelText: 'Nombre',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextField(
+                          controller: lastName,
+                          decoration: const InputDecoration(
+                            labelText: 'Apellido',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: phone,
+                    keyboardType: TextInputType.phone,
+                    decoration: const InputDecoration(
+                      labelText: 'Teléfono personal (opcional)',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: fleetPhone,
+                    keyboardType: TextInputType.phone,
+                    decoration: const InputDecoration(
+                      labelText: 'Teléfono de flota (opcional)',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: password,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Contraseña inicial',
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'La contraseña la elige quien crea la cuenta y se le comunica por un canal seguro. '
+                    'El CRM no muestra contraseñas ni hashes.',
+                    style: TextStyle(fontSize: 11.5, color: p.inkSecondary),
+                  ),
+                  if (error != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        error!,
+                        style: TextStyle(fontSize: 12.5, color: p.danger),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final user = username.text.trim();
+                final name = displayName.text.trim();
+                final pass = password.text;
+                if (user.isEmpty) {
+                  setDialogState(() => error = 'Escribe el usuario.');
+                  return;
+                }
+                if (name.isEmpty) {
+                  setDialogState(() => error = 'Escribe el nombre visible.');
+                  return;
+                }
+                if (pass.isEmpty) {
+                  setDialogState(
+                    () => error = 'Escribe una contraseña inicial.',
+                  );
+                  return;
+                }
+                Navigator.of(dialogContext).pop(
+                  NewUserForm(
+                    username: user,
+                    password: pass,
+                    displayName: name,
+                    role: role,
+                    firstName: firstName.text.trim(),
+                    lastName: lastName.text.trim(),
+                    personalPhone: phone.text.trim(),
+                    fleetPhone: fleetPhone.text.trim(),
+                  ),
+                );
+              },
+              child: const Text('Crear'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('Cancelar')),
-          FilledButton(
-            onPressed: () {
-              final user = username.text.trim();
-              final name = displayName.text.trim();
-              final pass = password.text;
-              if (user.isEmpty) {
-                setDialogState(() => error = 'Escribe el usuario.');
-                return;
-              }
-              if (name.isEmpty) {
-                setDialogState(() => error = 'Escribe el nombre visible.');
-                return;
-              }
-              if (pass.isEmpty) {
-                setDialogState(() => error = 'Escribe una contraseña inicial.');
-                return;
-              }
-              Navigator.of(dialogContext).pop(
-                NewUserForm(
-                  username: user,
-                  password: pass,
-                  displayName: name,
-                  role: role,
-                  firstName: firstName.text.trim(),
-                  lastName: lastName.text.trim(),
-                  personalPhone: phone.text.trim(),
-                ),
-              );
-            },
-            child: const Text('Crear'),
-          ),
-        ],
-      ),
-    ),
+      );
+    },
   );
 }
 
@@ -171,9 +245,13 @@ Future<bool> createUserFromForm(
       firstName: form.firstName,
       lastName: form.lastName,
       personalPhone: form.personalPhone,
+      fleetPhone: form.fleetPhone,
     );
     if (!context.mounted) return true;
-    crmToast(context, 'Usuario creado. Comunícale la contraseña por un canal seguro.');
+    crmToast(
+      context,
+      'Usuario creado. Comunícale la contraseña por un canal seguro.',
+    );
     return true;
   } on ApiException catch (error) {
     if (!context.mounted) return false;
@@ -190,11 +268,23 @@ Future<bool> createUserFromForm(
 }
 
 class EditUserForm {
-  const EditUserForm({required this.displayName, required this.role, required this.active});
+  const EditUserForm({
+    required this.displayName,
+    required this.role,
+    required this.active,
+    required this.firstName,
+    required this.lastName,
+    required this.personalPhone,
+    required this.fleetPhone,
+  });
 
   final String displayName;
   final String role;
   final bool active;
+  final String firstName;
+  final String lastName;
+  final String personalPhone;
+  final String fleetPhone;
 }
 
 /// Edición de un usuario existente.
@@ -209,97 +299,213 @@ Future<EditUserForm?> showEditUserDialog(
   required CrmRepository repository,
 }) {
   final p = context.crm;
-  final displayName = TextEditingController(text: str(user['display_name'], str(user['displayName'])));
+  final displayName = TextEditingController(
+    text: str(user['display_name'], str(user['displayName'])),
+  );
+  final firstName = TextEditingController(text: str(user['first_name']));
+  final lastName = TextEditingController(text: str(user['last_name']));
+  final personalPhone = TextEditingController(
+    text: str(user['personal_phone']),
+  );
+  final fleetPhone = TextEditingController(text: str(user['fleet_phone']));
   var role = str(user['role'], 'AGENT').toUpperCase();
   var active = user['active'] != false;
   const roles = ['ADMIN', 'AGENT', 'OPERADOR', 'DELIVERY', 'SUPPLIER'];
   if (!roles.contains(role)) role = 'AGENT';
+  var disposalScheduled = false;
 
   return showDialog<EditUserForm>(
     context: context,
-    builder: (dialogContext) => StatefulBuilder(
-      builder: (dialogContext, setDialogState) => AlertDialog(
-        title: Text('Editar ${str(user['username'], 'usuario')}'),
-        content: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextField(
-                controller: displayName,
-                maxLength: 120,
-                decoration: const InputDecoration(labelText: 'Nombre visible'),
-              ),
-              DropdownButtonFormField<String>(
-                initialValue: role,
-                decoration: const InputDecoration(labelText: 'Rol'),
-                items: const [
-                  DropdownMenuItem(value: 'ADMIN', child: Text('Administración')),
-                  DropdownMenuItem(value: 'AGENT', child: Text('Agente')),
-                  DropdownMenuItem(value: 'OPERADOR', child: Text('Operador')),
-                  DropdownMenuItem(value: 'DELIVERY', child: Text('Reparto')),
-                  DropdownMenuItem(value: 'SUPPLIER', child: Text('Proveedor')),
-                ],
-                onChanged: (value) => setDialogState(() => role = value ?? role),
-              ),
-              const SizedBox(height: 8),
-              SwitchListTile(
-                value: active,
-                onChanged: (value) => setDialogState(() => active = value),
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Cuenta activa', style: TextStyle(fontSize: 13.5)),
-                subtitle: const Text('Desactivada no puede entrar, pero no se borra su historial.', style: TextStyle(fontSize: 11.5)),
-              ),
-              Text(
-                'El servidor no permite dejar el CRM sin administración activa: lo dirá él si se intenta.',
-                style: TextStyle(fontSize: 11.5, color: p.inkSecondary),
-              ),
-              const SizedBox(height: 4),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  icon: const Icon(Icons.apartment_outlined, size: 16),
-                  label: const Text('Empresas permitidas', style: TextStyle(fontSize: 12.5)),
-                  onPressed: () => showCompaniesSheet(
-                    context,
-                    repository: repository,
-                    userId: str(user['id']),
+    builder: (dialogContext) {
+      if (!disposalScheduled) {
+        disposalScheduled = true;
+        ModalRoute.of(dialogContext)?.completed.then((_) {
+          for (final controller in [
+            displayName,
+            firstName,
+            lastName,
+            personalPhone,
+            fleetPhone,
+          ]) {
+            controller.dispose();
+          }
+        });
+      }
+      return StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: Text('Editar ${str(user['username'], 'usuario')}'),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: displayName,
+                    maxLength: 120,
+                    decoration: const InputDecoration(
+                      labelText: 'Nombre visible',
+                    ),
                   ),
-                ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: firstName,
+                          decoration: const InputDecoration(
+                            labelText: 'Nombre',
+                            isDense: true,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextField(
+                          controller: lastName,
+                          decoration: const InputDecoration(
+                            labelText: 'Apellido',
+                            isDense: true,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: personalPhone,
+                          keyboardType: TextInputType.phone,
+                          decoration: const InputDecoration(
+                            labelText: 'Teléfono personal',
+                            isDense: true,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextField(
+                          controller: fleetPhone,
+                          keyboardType: TextInputType.phone,
+                          decoration: const InputDecoration(
+                            labelText: 'Teléfono de flota',
+                            isDense: true,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: role,
+                    decoration: const InputDecoration(labelText: 'Rol'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'ADMIN',
+                        child: Text('Administración'),
+                      ),
+                      DropdownMenuItem(value: 'AGENT', child: Text('Agente')),
+                      DropdownMenuItem(
+                        value: 'OPERADOR',
+                        child: Text('Operador'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'DELIVERY',
+                        child: Text('Reparto'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'SUPPLIER',
+                        child: Text('Proveedor'),
+                      ),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => role = value ?? role),
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    value: active,
+                    onChanged: (value) => setDialogState(() => active = value),
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text(
+                      'Cuenta activa',
+                      style: TextStyle(fontSize: 13.5),
+                    ),
+                    subtitle: const Text(
+                      'Desactivada no puede entrar, pero no se borra su historial.',
+                      style: TextStyle(fontSize: 11.5),
+                    ),
+                  ),
+                  Text(
+                    'El servidor no permite dejar el CRM sin administración activa: lo dirá él si se intenta.',
+                    style: TextStyle(fontSize: 11.5, color: p.inkSecondary),
+                  ),
+                  const SizedBox(height: 4),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      icon: const Icon(Icons.apartment_outlined, size: 16),
+                      label: const Text(
+                        'Empresas permitidas',
+                        style: TextStyle(fontSize: 12.5),
+                      ),
+                      onPressed: () => showCompaniesSheet(
+                        context,
+                        repository: repository,
+                        userId: str(user['id']),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final name = displayName.text.trim();
+                if (name.isEmpty) return;
+                final roleChanged =
+                    role != str(user['role'], 'AGENT').toUpperCase();
+                final deactivating = user['active'] != false && !active;
+                if (roleChanged || deactivating) {
+                  final ok = await crmConfirm(
+                    dialogContext,
+                    title: 'Confirmar cambio de acceso',
+                    message: [
+                      if (roleChanged) 'El rol pasará a $role.',
+                      if (deactivating)
+                        'La cuenta quedará desactivada y no podrá entrar.',
+                    ].join(' '),
+                    confirmLabel: 'Aplicar',
+                  );
+                  if (!ok) return;
+                }
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop(
+                    EditUserForm(
+                      displayName: name,
+                      role: role,
+                      active: active,
+                      firstName: firstName.text.trim(),
+                      lastName: lastName.text.trim(),
+                      personalPhone: personalPhone.text.trim(),
+                      fleetPhone: fleetPhone.text.trim(),
+                    ),
+                  );
+                }
+              },
+              child: const Text('Guardar'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('Cancelar')),
-          FilledButton(
-            onPressed: () async {
-              final name = displayName.text.trim();
-              if (name.isEmpty) return;
-              final roleChanged = role != str(user['role'], 'AGENT').toUpperCase();
-              final deactivating = user['active'] != false && !active;
-              if (roleChanged || deactivating) {
-                final ok = await crmConfirm(
-                  dialogContext,
-                  title: 'Confirmar cambio de acceso',
-                  message: [
-                    if (roleChanged) 'El rol pasará a $role.',
-                    if (deactivating) 'La cuenta quedará desactivada y no podrá entrar.',
-                  ].join(' '),
-                  confirmLabel: 'Aplicar',
-                );
-                if (!ok) return;
-              }
-              if (dialogContext.mounted) {
-                Navigator.of(dialogContext).pop(EditUserForm(displayName: name, role: role, active: active));
-              }
-            },
-            child: const Text('Guardar'),
-          ),
-        ],
-      ),
-    ),
+      );
+    },
   );
 }
 
@@ -311,19 +517,35 @@ Future<bool> saveUserEdit(
   required EditUserForm form,
 }) async {
   try {
-    await repository.updateUser(userId, displayName: form.displayName, role: form.role, active: form.active);
+    await repository.updateUser(
+      userId,
+      displayName: form.displayName,
+      role: form.role,
+      active: form.active,
+      firstName: form.firstName,
+      lastName: form.lastName,
+      personalPhone: form.personalPhone,
+      fleetPhone: form.fleetPhone,
+    );
     if (!context.mounted) return true;
     crmToast(context, 'Usuario actualizado.');
     return true;
   } on ApiException catch (error) {
     if (!context.mounted) return false;
     final message = switch (error.code) {
-      'last_admin' => 'No se puede dejar el CRM sin ningún administrador activo.',
+      'last_admin' =>
+        'No se puede dejar el CRM sin ningún administrador activo.',
       'invalid_role' => 'Ese rol no existe en el CRM.',
       'not_found' => 'Ese usuario ya no existe. Recarga la lista.',
-      _ => error.message.isEmpty ? 'No se pudo guardar el cambio.' : error.message,
+      _ =>
+        error.message.isEmpty ? 'No se pudo guardar el cambio.' : error.message,
     };
-    await crmConfirm(context, title: 'No se pudo guardar', message: message, confirmLabel: 'Entendido');
+    await crmConfirm(
+      context,
+      title: 'No se pudo guardar',
+      message: message,
+      confirmLabel: 'Entendido',
+    );
     return false;
   }
 }
@@ -354,19 +576,25 @@ Future<bool> changeOwnPasswordDialog(
               TextField(
                 controller: current,
                 obscureText: true,
-                decoration: const InputDecoration(labelText: 'Contraseña actual'),
+                decoration: const InputDecoration(
+                  labelText: 'Contraseña actual',
+                ),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: next,
                 obscureText: true,
-                decoration: const InputDecoration(labelText: 'Contraseña nueva'),
+                decoration: const InputDecoration(
+                  labelText: 'Contraseña nueva',
+                ),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: confirm,
                 obscureText: true,
-                decoration: const InputDecoration(labelText: 'Repite la contraseña nueva'),
+                decoration: const InputDecoration(
+                  labelText: 'Repite la contraseña nueva',
+                ),
               ),
               const SizedBox(height: 8),
               Text(
@@ -376,14 +604,19 @@ Future<bool> changeOwnPasswordDialog(
               if (error != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
-                  child: Text(error!, style: TextStyle(fontSize: 12.5, color: p.danger)),
+                  child: Text(
+                    error!,
+                    style: TextStyle(fontSize: 12.5, color: p.danger),
+                  ),
                 ),
             ],
           ),
         ),
         actions: [
           TextButton(
-            onPressed: busy ? null : () => Navigator.of(dialogContext).pop(false),
+            onPressed: busy
+                ? null
+                : () => Navigator.of(dialogContext).pop(false),
             child: const Text('Cancelar'),
           ),
           FilledButton(
@@ -391,7 +624,9 @@ Future<bool> changeOwnPasswordDialog(
                 ? null
                 : () async {
                     if (next.text != confirm.text) {
-                      setDialogState(() => error = 'Las contraseñas nuevas no coinciden.');
+                      setDialogState(
+                        () => error = 'Las contraseñas nuevas no coinciden.',
+                      );
                       return;
                     }
                     setDialogState(() {
@@ -404,16 +639,23 @@ Future<bool> changeOwnPasswordDialog(
                         newPassword: next.text,
                         confirmPassword: confirm.text,
                       );
-                      if (dialogContext.mounted) Navigator.of(dialogContext).pop(true);
+                      if (dialogContext.mounted)
+                        Navigator.of(dialogContext).pop(true);
                     } on ApiException catch (exception) {
                       setDialogState(() {
                         busy = false;
-                        error = exception.message.isEmpty ? 'No se pudo cambiar la contraseña.' : exception.message;
+                        error = exception.message.isEmpty
+                            ? 'No se pudo cambiar la contraseña.'
+                            : exception.message;
                       });
                     }
                   },
             child: busy
-                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
                 : const Text('Cambiar'),
           ),
         ],
@@ -422,7 +664,6 @@ Future<bool> changeOwnPasswordDialog(
   );
   return changed == true;
 }
-
 
 /// Empresas del usuario: concesiones reales del servidor y catálogo para elegir.
 ///
@@ -493,14 +734,16 @@ class _CompaniesSheetState extends State<_CompaniesSheet> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = exception.message.isEmpty ? 'No se pudieron cargar las empresas.' : exception.message;
+        _error = exception.message.isEmpty
+            ? 'No se pudieron cargar las empresas.'
+            : exception.message;
       });
     }
   }
 
   bool _granted(String companyId) => _grants.any(
-        (row) => str(row['company_id']) == companyId && row['active'] == true,
-      );
+    (row) => str(row['company_id']) == companyId && row['active'] == true,
+  );
 
   /// Un solo envío por empresa: el interruptor afectado se deshabilita mientras
   /// viaja y se releen las concesiones al terminar.
@@ -508,7 +751,11 @@ class _CompaniesSheetState extends State<_CompaniesSheet> {
     if (_busy.contains(companyId)) return;
     setState(() => _busy.add(companyId));
     try {
-      await widget.repository.setUserCompany(widget.userId, companyId: companyId, active: value);
+      await widget.repository.setUserCompany(
+        widget.userId,
+        companyId: companyId,
+        active: value,
+      );
       final own = await widget.repository.userCompanyGrants(widget.userId);
       if (!mounted) return;
       setState(() {
@@ -520,7 +767,9 @@ class _CompaniesSheetState extends State<_CompaniesSheet> {
       if (!mounted) return;
       setState(() {
         _busy.remove(companyId);
-        _error = exception.message.isEmpty ? 'No se pudo guardar el cambio.' : exception.message;
+        _error = exception.message.isEmpty
+            ? 'No se pudo guardar el cambio.'
+            : exception.message;
       });
     }
   }
@@ -530,14 +779,23 @@ class _CompaniesSheetState extends State<_CompaniesSheet> {
     final p = context.crm;
     return SafeArea(
       child: Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Empresas permitidas', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: p.ink)),
+              Text(
+                'Empresas permitidas',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: p.ink,
+                ),
+              ),
               const SizedBox(height: 4),
               Text(
                 'Solo afecta al alcance de reparto. El servidor decide qué ve cada rol; '
@@ -550,20 +808,33 @@ class _CompaniesSheetState extends State<_CompaniesSheet> {
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Row(
                     children: [
-                      Expanded(child: Text(_error!, style: TextStyle(fontSize: 12.5, color: p.danger))),
-                      TextButton(onPressed: _loading ? null : () => _load(), child: const Text('Reintentar')),
+                      Expanded(
+                        child: Text(
+                          _error!,
+                          style: TextStyle(fontSize: 12.5, color: p.danger),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _loading ? null : () => _load(),
+                        child: const Text('Reintentar'),
+                      ),
                     ],
                   ),
                 ),
               if (_loading)
                 const Padding(
                   padding: EdgeInsets.all(16),
-                  child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                  child: Center(
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
                 )
               else if (_companies.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: Text('No hay empresas logísticas creadas.', style: TextStyle(fontSize: 12.5, color: p.inkSecondary)),
+                  child: Text(
+                    'No hay empresas logísticas creadas.',
+                    style: TextStyle(fontSize: 12.5, color: p.inkSecondary),
+                  ),
                 )
               else
                 Flexible(
@@ -571,22 +842,41 @@ class _CompaniesSheetState extends State<_CompaniesSheet> {
                     shrinkWrap: true,
                     children: [
                       for (final company in _companies)
-                        Builder(builder: (context) {
-                          final id = str(company['id']);
-                          final inactive = company['active'] == false;
-                          final busy = _busy.contains(id);
-                          return SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
-                            value: _granted(id),
-                            title: Text(str(company['name'], id), style: const TextStyle(fontSize: 13.5)),
-                            subtitle: inactive
-                                ? Text('Empresa inactiva', style: TextStyle(fontSize: 11.5, color: p.inkSecondary))
-                                : (busy
-                                    ? Text('Guardando…', style: TextStyle(fontSize: 11.5, color: p.inkSecondary))
-                                    : null),
-                            onChanged: busy || inactive ? null : (value) => _toggle(id, value),
-                          );
-                        }),
+                        Builder(
+                          builder: (context) {
+                            final id = str(company['id']);
+                            final inactive = company['active'] == false;
+                            final busy = _busy.contains(id);
+                            return SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              value: _granted(id),
+                              title: Text(
+                                str(company['name'], id),
+                                style: const TextStyle(fontSize: 13.5),
+                              ),
+                              subtitle: inactive
+                                  ? Text(
+                                      'Empresa inactiva',
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        color: p.inkSecondary,
+                                      ),
+                                    )
+                                  : (busy
+                                        ? Text(
+                                            'Guardando…',
+                                            style: TextStyle(
+                                              fontSize: 11.5,
+                                              color: p.inkSecondary,
+                                            ),
+                                          )
+                                        : null),
+                              onChanged: busy || inactive
+                                  ? null
+                                  : (value) => _toggle(id, value),
+                            );
+                          },
+                        ),
                     ],
                   ),
                 ),

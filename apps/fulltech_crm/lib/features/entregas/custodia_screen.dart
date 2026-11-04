@@ -26,6 +26,7 @@ class CustodiaScreen extends StatefulWidget {
 class _CustodiaScreenState extends State<CustodiaScreen> {
   int _tab = 0;
   bool _busy = false;
+
   /// Una revisión a la vez: evita el doble envío desde dos toques rápidos.
   bool _resolving = false;
 
@@ -34,7 +35,9 @@ class _CustodiaScreenState extends State<CustodiaScreen> {
   Future<String?> _remit(Map<String, dynamic> row) async {
     final pendingCents = intv(row['pending_cents']);
     if (pendingCents <= 0) return 'Ese repartidor no tiene efectivo pendiente.';
-    final amount = TextEditingController(text: (pendingCents / 100).toStringAsFixed(2));
+    final amount = TextEditingController(
+      text: (pendingCents / 100).toStringAsFixed(2),
+    );
     final note = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
@@ -44,21 +47,39 @@ class _CustodiaScreenState extends State<CustodiaScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Pendiente: ${CrmFormat.money(pendingCents / 100)}', style: const TextStyle(fontSize: 12.5)),
+            Text(
+              'Pendiente: ${CrmFormat.money(pendingCents / 100)}',
+              style: const TextStyle(fontSize: 12.5),
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: amount,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
-              decoration: const InputDecoration(labelText: 'Efectivo entregado'),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
+              ],
+              decoration: const InputDecoration(
+                labelText: 'Efectivo entregado',
+              ),
             ),
             const SizedBox(height: 10),
-            TextField(controller: note, decoration: const InputDecoration(labelText: 'Nota (opcional)')),
+            TextField(
+              controller: note,
+              decoration: const InputDecoration(labelText: 'Nota (opcional)'),
+            ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Registrar')),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Registrar'),
+          ),
         ],
       ),
     );
@@ -75,7 +96,9 @@ class _CustodiaScreenState extends State<CustodiaScreen> {
       note: noteText.isEmpty ? null : noteText,
       operationKey: newOperationKey('rem'),
     );
-    return result['duplicate'] == true ? 'Esa rendición ya estaba registrada.' : 'Rendición registrada.';
+    return result['duplicate'] == true
+        ? 'Esa rendición ya estaba registrada.'
+        : 'Rendición registrada.';
   }
 
   Future<String?> _resolve(Map<String, dynamic> movement) async {
@@ -97,15 +120,28 @@ class _CustodiaScreenState extends State<CustodiaScreen> {
             TextField(
               controller: justification,
               maxLines: 2,
-              decoration: const InputDecoration(labelText: 'Justificación (mínimo 10 caracteres)'),
+              decoration: const InputDecoration(
+                labelText: 'Justificación (mínimo 10 caracteres)',
+              ),
             ),
             const SizedBox(height: 8),
-            TextField(controller: evidence, decoration: const InputDecoration(labelText: 'Evidencia (opcional)')),
+            TextField(
+              controller: evidence,
+              decoration: const InputDecoration(
+                labelText: 'Evidencia (opcional)',
+              ),
+            ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Registrar')),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Registrar'),
+          ),
         ],
       ),
     );
@@ -114,12 +150,15 @@ class _CustodiaScreenState extends State<CustodiaScreen> {
     justification.dispose();
     evidence.dispose();
     if (confirmed != true) return null;
-    if (reason.length < 10) return 'Explica con qué evidencia se concluyó (mínimo 10 caracteres).';
+    if (reason.length < 10)
+      return 'Explica con qué evidencia se concluyó (mínimo 10 caracteres).';
     await _repo.recordCashResolution(
       movementId: str(movement['id']),
       justification: reason,
       evidence: proof.isEmpty ? null : proof,
-      companyId: str(movement['company_id']).isEmpty ? null : str(movement['company_id']),
+      companyId: str(movement['company_id']).isEmpty
+          ? null
+          : str(movement['company_id']),
     );
     return 'Revisión registrada. La custodia sigue bloqueada hasta autorización.';
   }
@@ -138,14 +177,42 @@ class _CustodiaScreenState extends State<CustodiaScreen> {
 
     return Column(
       children: [
-        const CrmPageHeader(title: 'Custodia y rendiciones', subtitle: 'Efectivo en manos del reparto'),
+        Container(
+          height: 40,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: p.surface,
+            border: Border(bottom: BorderSide(color: p.border)),
+          ),
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Custodia y rendiciones',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: p.ink,
+            ),
+          ),
+        ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+          padding: const EdgeInsets.fromLTRB(12, 5, 12, 5),
           child: SegmentedButton<int>(
             segments: const [
-              ButtonSegment(value: 0, label: Text('Resumen'), icon: Icon(Icons.account_balance_wallet_outlined, size: 16)),
-              ButtonSegment(value: 1, label: Text('Movimientos'), icon: Icon(Icons.swap_horiz_rounded, size: 16)),
-              ButtonSegment(value: 2, label: Text('Conciliación'), icon: Icon(Icons.rule_rounded, size: 16)),
+              ButtonSegment(
+                value: 0,
+                label: Text('Resumen'),
+                icon: Icon(Icons.account_balance_wallet_outlined, size: 16),
+              ),
+              ButtonSegment(
+                value: 1,
+                label: Text('Movimientos'),
+                icon: Icon(Icons.swap_horiz_rounded, size: 16),
+              ),
+              ButtonSegment(
+                value: 2,
+                label: Text('Conciliación'),
+                icon: Icon(Icons.rule_rounded, size: 16),
+              ),
             ],
             selected: {_tab},
             onSelectionChanged: (value) => setState(() => _tab = value.first),
@@ -154,136 +221,197 @@ class _CustodiaScreenState extends State<CustodiaScreen> {
         Expanded(
           child: switch (_tab) {
             0 => RemoteLoader<Map<String, dynamic>>(
-                load: state.repository.deliveryCash,
-                loadingLabel: 'Cargando custodia',
-                builder: (context, data, reload) => _Summary(
-                  data: data,
-                  isAdmin: isAdmin,
-                  busy: _busy,
-                  onRemit: (row) async {
-                    if (_busy) return;
-                    setState(() => _busy = true);
-                    String? message;
-                    try {
-                      message = await _remit(row);
-                    } on ApiException catch (error) {
-                      message = error.message;
-                    } finally {
-                      if (mounted) setState(() => _busy = false);
-                    }
-                    await _report(message, reload);
-                  },
-                  onOpenMovements: (row) async {
-                    final movements = await state.repository.deliveryCashMovements(courierId: str(row['courier_id']));
-                    if (!context.mounted) return;
-                    await showModalBottomSheet<void>(
-                      context: context,
-                      showDragHandle: true,
-                      isScrollControlled: true,
-                      builder: (sheetContext) => SafeArea(
-                        child: ListView(
-                          shrinkWrap: true,
-                          padding: const EdgeInsets.only(bottom: 16),
-                          children: [
-                            SheetTitle(title: 'Movimientos · ${str(row['courier_name'], 'repartidor')}'),
-                            if (movements.isEmpty) const ListTile(title: Text('Sin movimientos.')),
-                            for (final movement in movements) _MovementTile(movement: movement),
-                          ],
-                        ),
+              load: state.repository.deliveryCash,
+              loadingLabel: 'Cargando custodia',
+              builder: (context, data, reload) => _Summary(
+                data: data,
+                isAdmin: isAdmin,
+                busy: _busy,
+                onRemit: (row) async {
+                  if (_busy) return;
+                  setState(() => _busy = true);
+                  String? message;
+                  try {
+                    message = await _remit(row);
+                  } on ApiException catch (error) {
+                    message = error.message;
+                  } finally {
+                    if (mounted) setState(() => _busy = false);
+                  }
+                  await _report(message, reload);
+                },
+                onOpenMovements: (row) async {
+                  final movements = await state.repository
+                      .deliveryCashMovements(courierId: str(row['courier_id']));
+                  if (!context.mounted) return;
+                  await showModalBottomSheet<void>(
+                    context: context,
+                    showDragHandle: true,
+                    isScrollControlled: true,
+                    builder: (sheetContext) => SafeArea(
+                      child: ListView(
+                        shrinkWrap: true,
+                        padding: const EdgeInsets.only(bottom: 16),
+                        children: [
+                          SheetTitle(
+                            title:
+                                'Movimientos · ${str(row['courier_name'], 'repartidor')}',
+                          ),
+                          if (movements.isEmpty)
+                            const ListTile(title: Text('Sin movimientos.')),
+                          for (final movement in movements)
+                            _MovementTile(movement: movement),
+                        ],
                       ),
-                    );
-                  },
-                ),
-              ),
-            1 => RemoteLoader<List<Map<String, dynamic>>>(
-                load: state.repository.deliveryCashMovements,
-                loadingLabel: 'Cargando movimientos',
-                builder: (context, rows, reload) => ListView(
-                  padding: const EdgeInsets.only(top: 4, bottom: 26),
-                  children: [
-                    SectionCard(
-                      title: 'Libro de movimientos',
-                      child: rows.isEmpty
-                          ? Text('Sin movimientos.', style: TextStyle(fontSize: 12.5, color: p.inkSecondary))
-                          : Column(children: [for (final row in rows.take(200)) _MovementTile(movement: row)]),
                     ),
-                  ],
-                ),
-              ),
-            _ => RemoteLoader<Map<String, dynamic>>(
-                load: state.repository.deliveryCashReconciliation,
-                loadingLabel: 'Conciliando',
-                builder: (context, report, reload) {
-                  final unresolved = listv(report['unresolved_movements']);
-                  final byCompany = mapv(report['by_company']);
-                  return ListView(
-                    padding: const EdgeInsets.only(top: 4, bottom: 26),
-                    children: [
-                      SectionCard(
-                        title: 'Por empresa',
-                        child: byCompany.isEmpty
-                            ? Text('Sin datos de conciliación.', style: TextStyle(fontSize: 12.5, color: p.inkSecondary))
-                            : Column(
-                                children: [
-                                  for (final entry in byCompany.entries)
-                                    CrmListTile(
-                                      title: entry.key,
-                                      subtitle: 'Cargos ${CrmFormat.money(dub(mapv(entry.value)['charged_cents']) / 100)} · '
-                                          'Rendido ${CrmFormat.money(dub(mapv(entry.value)['remitted_cents']) / 100)}',
-                                      trailing: Text(
-                                        CrmFormat.money(dub(mapv(entry.value)['pending_cents']) / 100),
-                                        style: const TextStyle(fontWeight: FontWeight.w800),
-                                      ),
-                                      leading: const CrmAvatar(label: 'E', icon: Icons.business_outlined),
-                                    ),
-                                ],
-                              ),
-                      ),
-                      SectionCard(
-                        title: 'Movimientos sin resolver (${unresolved.length})',
-                        child: unresolved.isEmpty
-                            ? Text('Todo conciliado.', style: TextStyle(fontSize: 12.5, color: p.inkSecondary))
-                            : Column(
-                                children: [
-                                  for (final movement in unresolved.take(60))
-                                    _MovementTile(
-                                      movement: movement,
-                                      trailing: isAdmin
-                                          ? TextButton(
-                                              onPressed: _resolving
-                                                  ? null
-                                                  : () async {
-                                                      // Un solo envío a la vez: el servidor identifica la
-                                                      // revisión por movimiento y responde 409 si ya existe.
-                                                      setState(() => _resolving = true);
-                                                      String? message;
-                                                      try {
-                                                        message = await _resolve(movement);
-                                                      } on ApiException catch (error) {
-                                                        message = error.message;
-                                                      } finally {
-                                                        if (mounted) setState(() => _resolving = false);
-                                                      }
-                                                      await _report(message, reload);
-                                                    },
-                                              child: const Text('Revisar'),
-                                            )
-                                          : null,
-                                    ),
-                                ],
-                              ),
-                      ),
-                      if (isAdmin)
-                        _ResolutionsCard(repository: state.repository),
-                      if (isAdmin)
-                        const CrmNotice(
-                          message: 'La conciliación solo describe. Ninguna pantalla mueve dinero por su cuenta: '
-                              'registrar una revisión no corrige saldos.',
-                        ),
-                    ],
                   );
                 },
               ),
+            ),
+            1 => RemoteLoader<List<Map<String, dynamic>>>(
+              load: state.repository.deliveryCashMovements,
+              loadingLabel: 'Cargando movimientos',
+              builder: (context, rows, reload) => ListView(
+                padding: const EdgeInsets.only(top: 4, bottom: 26),
+                children: [
+                  SectionCard(
+                    title: 'Libro de movimientos',
+                    margin: const EdgeInsets.all(6),
+                    padding: const EdgeInsets.all(9),
+                    child: rows.isEmpty
+                        ? Text(
+                            'Sin movimientos.',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              color: p.inkSecondary,
+                            ),
+                          )
+                        : Column(
+                            children: [
+                              for (final row in rows.take(200))
+                                _MovementTile(movement: row),
+                            ],
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            _ => RemoteLoader<Map<String, dynamic>>(
+              load: state.repository.deliveryCashReconciliation,
+              loadingLabel: 'Conciliando',
+              builder: (context, report, reload) {
+                final unresolved = listv(report['unresolved_movements']);
+                final byCompany = mapv(report['by_company']);
+                return ListView(
+                  padding: const EdgeInsets.only(top: 4, bottom: 26),
+                  children: [
+                    SectionCard(
+                      title: 'Por empresa',
+                      margin: const EdgeInsets.all(6),
+                      padding: const EdgeInsets.all(9),
+                      child: byCompany.isEmpty
+                          ? Text(
+                              'Sin datos de conciliación.',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                color: p.inkSecondary,
+                              ),
+                            )
+                          : Column(
+                              children: [
+                                for (final entry in byCompany.entries)
+                                  CrmListTile(
+                                    title: entry.key,
+                                    subtitle:
+                                        'Cargos ${CrmFormat.money(dub(mapv(entry.value)['charged_cents']) / 100)} · '
+                                        'Rendido ${CrmFormat.money(dub(mapv(entry.value)['remitted_cents']) / 100)}',
+                                    trailing: Text(
+                                      CrmFormat.money(
+                                        dub(
+                                              mapv(
+                                                entry.value,
+                                              )['pending_cents'],
+                                            ) /
+                                            100,
+                                      ),
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    leading: const CrmAvatar(
+                                      label: 'E',
+                                      icon: Icons.business_outlined,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                    ),
+                    SectionCard(
+                      title: 'Movimientos sin resolver (${unresolved.length})',
+                      margin: const EdgeInsets.all(6),
+                      padding: const EdgeInsets.all(9),
+                      child: unresolved.isEmpty
+                          ? Text(
+                              'Todo conciliado.',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                color: p.inkSecondary,
+                              ),
+                            )
+                          : Column(
+                              children: [
+                                for (final movement in unresolved.take(60))
+                                  _MovementTile(
+                                    movement: movement,
+                                    trailing: isAdmin
+                                        ? TextButton(
+                                            onPressed: _resolving
+                                                ? null
+                                                : () async {
+                                                    // Un solo envío a la vez: el servidor identifica la
+                                                    // revisión por movimiento y responde 409 si ya existe.
+                                                    setState(
+                                                      () => _resolving = true,
+                                                    );
+                                                    String? message;
+                                                    try {
+                                                      message = await _resolve(
+                                                        movement,
+                                                      );
+                                                    } on ApiException catch (
+                                                      error
+                                                    ) {
+                                                      message = error.message;
+                                                    } finally {
+                                                      if (mounted)
+                                                        setState(
+                                                          () => _resolving =
+                                                              false,
+                                                        );
+                                                    }
+                                                    await _report(
+                                                      message,
+                                                      reload,
+                                                    );
+                                                  },
+                                            child: const Text('Revisar'),
+                                          )
+                                        : null,
+                                  ),
+                              ],
+                            ),
+                    ),
+                    if (isAdmin) _ResolutionsCard(repository: state.repository),
+                    if (isAdmin)
+                      const CrmNotice(
+                        message:
+                            'La conciliación solo describe. Ninguna pantalla mueve dinero por su cuenta: '
+                            'registrar una revisión no corrige saldos.',
+                      ),
+                  ],
+                );
+              },
+            ),
           },
         ),
       ],
@@ -310,7 +438,6 @@ class _Summary extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = context.crm;
     final rows = listv(data['couriers']);
-    final companyId = str(data['company_id'], 'phytoemagry');
     var charged = 0;
     var remitted = 0;
     var pending = 0;
@@ -320,99 +447,145 @@ class _Summary extends StatelessWidget {
       pending += intv(row['pending_cents']);
     }
 
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 26),
+    return Column(
       children: [
-        StatGrid(
-          children: [
-            StatTile(label: 'Cobrado en efectivo', value: CrmFormat.money(charged / 100, short: true), icon: Icons.payments_outlined),
-            StatTile(
-              label: 'Rendido',
-              value: CrmFormat.money(remitted / 100, short: true),
-              tone: p.success,
-              icon: Icons.check_circle_outline_rounded,
+        Container(
+          height: 52,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: p.surface,
+            border: Border(bottom: BorderSide(color: p.border)),
+          ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _CashMetric(
+                  label: 'Cobrado',
+                  value: CrmFormat.money(charged / 100),
+                  color: p.ink,
+                ),
+                _CashMetric(
+                  label: 'Rendido',
+                  value: CrmFormat.money(remitted / 100),
+                  color: p.success,
+                ),
+                _CashMetric(
+                  label: 'Por rendir',
+                  value: CrmFormat.money(pending / 100),
+                  color: pending > 0 ? p.danger : p.success,
+                ),
+                Text(
+                  '${rows.length} repartidores',
+                  style: TextStyle(fontSize: 11, color: p.inkSecondary),
+                ),
+              ],
             ),
-            StatTile(
-              label: 'Pendiente de rendir',
-              value: CrmFormat.money(pending / 100, short: true),
-              tone: pending > 0 ? p.danger : p.success,
-              icon: Icons.warning_amber_rounded,
-            ),
-            StatTile(label: 'Repartidores', value: '${rows.length}', icon: Icons.delivery_dining_outlined),
-          ],
+          ),
         ),
-        SectionCard(
-          title: 'Por repartidor · $companyId',
+        Expanded(
           child: rows.isEmpty
-              ? Text('No hay efectivo en custodia.', style: TextStyle(fontSize: 12.5, color: p.inkSecondary))
-              : Column(
-                  children: [
-                    for (final row in rows)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            CrmListTile(
-                              title: str(row['courier_name'], 'Repartidor'),
-                              subtitle: '${intv(row['orders_count'])} pedido(s) · '
-                                  'cobrado ${CrmFormat.money(intv(row['charged_cents']) / 100)} · '
-                                  'rendido ${CrmFormat.money(intv(row['remitted_cents']) / 100)}',
-                              leading: CrmAvatar(label: str(row['courier_name'], 'R'), icon: Icons.delivery_dining_outlined),
-                              trailing: Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  Text(
-                                    CrmFormat.money(intv(row['pending_cents']) / 100),
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w800,
-                                      color: intv(row['pending_cents']) > 0 ? p.danger : p.success,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  // Estado de LIQUIDACIÓN: sin pendiente, la cuenta
-                                  // del repartidor con la empresa está saldada.
-                                  StatusPill(
-                                    label: intv(row['pending_cents']) > 0 ? 'pendiente' : 'liquidado',
-                                    dense: true,
-                                    color: intv(row['pending_cents']) > 0 ? p.warning : p.success,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.only(left: 4, bottom: 6),
-                              child: Wrap(
-                                spacing: 8,
-                                children: [
-                                  CrmButton(
-                                    label: 'Movimientos',
-                                    icon: Icons.list_alt_rounded,
-                                    filled: false,
-                                    tone: p.inkSecondary,
-                                    onPressed: () => onOpenMovements(row),
-                                  ),
-                                  if (isAdmin && intv(row['pending_cents']) > 0)
-                                    CrmButton(
-                                      label: 'Rendir efectivo',
-                                      icon: Icons.account_balance_wallet_outlined,
-                                      onPressed: busy ? null : () => onRemit(row),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ],
+              ? Center(
+                  child: Text(
+                    'No hay efectivo en custodia.',
+                    style: TextStyle(fontSize: 12.5, color: p.inkSecondary),
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: rows.length,
+                  itemBuilder: (context, index) {
+                    final row = rows[index];
+                    final due = intv(row['pending_cents']);
+                    return ListTile(
+                      dense: true,
+                      visualDensity: const VisualDensity(vertical: -2),
+                      leading: Icon(
+                        Icons.delivery_dining_outlined,
+                        size: 20,
+                        color: p.primary,
+                      ),
+                      title: Text(
+                        str(row['courier_name'], 'Repartidor'),
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: p.ink,
                         ),
                       ),
-                  ],
+                      subtitle: Text(
+                        '${intv(row['orders_count'])} pedidos · ${due > 0 ? 'Pendiente' : 'Liquidado'}',
+                        style: TextStyle(fontSize: 11.5, color: p.inkSecondary),
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            CrmFormat.money(due / 100),
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: due > 0 ? p.danger : p.success,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Ver movimientos',
+                            onPressed: () => onOpenMovements(row),
+                            icon: const Icon(Icons.list_alt_rounded, size: 18),
+                          ),
+                          if (isAdmin && due > 0)
+                            IconButton(
+                              tooltip: 'Rendir efectivo',
+                              onPressed: busy ? null : () => onRemit(row),
+                              icon: Icon(
+                                Icons.account_balance_wallet_outlined,
+                                size: 18,
+                                color: p.primary,
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
-        ),
-        const CrmNotice(
-          message: 'El efectivo que lleva un repartidor no está en caja: sale de custodia solo con una rendición registrada.',
         ),
       ],
     );
   }
+}
+
+class _CashMetric extends StatelessWidget {
+  const _CashMetric({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(right: 24),
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(fontSize: 10.5, color: context.crm.inkSecondary),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w800,
+            color: color,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _MovementTile extends StatelessWidget {
@@ -432,19 +605,40 @@ class _MovementTile extends StatelessWidget {
       _ => kind,
     };
     final cents = intv(movement['amount_cents']);
-    return CrmListTile(
-      title: label,
-      subtitle: [
-        str(movement['order_id']),
-        str(movement['courier_account_id']),
-        CrmFormat.ago(movement['created_at']),
-      ].where((row) => row.isNotEmpty).join(' · '),
-      leading: CrmAvatar(
-        label: label.substring(0, 1),
-        icon: kind == 'remittance' ? Icons.south_west_rounded : Icons.north_east_rounded,
-        tone: kind == 'remittance' ? p.success : p.inkSecondary,
+    return ListTile(
+      dense: true,
+      visualDensity: const VisualDensity(vertical: -2),
+      title: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12.5,
+          fontWeight: FontWeight.w700,
+          color: p.ink,
+        ),
       ),
-      trailing: trailing ?? Text(CrmFormat.money(cents / 100), style: const TextStyle(fontWeight: FontWeight.w700)),
+      subtitle: Text(
+        [
+          str(movement['order_id']),
+          str(movement['courier_account_id']),
+          CrmFormat.ago(movement['created_at']),
+        ].where((row) => row.isNotEmpty).join(' · '),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontSize: 11, color: p.inkSecondary),
+      ),
+      leading: Icon(
+        kind == 'remittance'
+            ? Icons.south_west_rounded
+            : Icons.north_east_rounded,
+        size: 19,
+        color: kind == 'remittance' ? p.success : p.inkSecondary,
+      ),
+      trailing:
+          trailing ??
+          Text(
+            CrmFormat.money(cents / 100),
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
     );
   }
 }
@@ -460,16 +654,26 @@ class SheetTitle extends StatelessWidget {
     final p = context.crm;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
-      child: Text(title, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: p.ink)),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w800,
+          color: p.ink,
+        ),
+      ),
     );
   }
 }
 
 /// Utilidad compartida: nombre visible de un repartidor en una fila suelta.
 String courierNameOf(Map<String, dynamic> row) => str(
-      row['courier_name'],
-      str(row['delivery_user_name'], str(row['name'], str(row['user_name'], 'Repartidor'))),
-    );
+  row['courier_name'],
+  str(
+    row['delivery_user_name'],
+    str(row['name'], str(row['user_name'], 'Repartidor')),
+  ),
+);
 
 /// Fila de un repartidor (usada por el listado de repartidores).
 class CourierTile extends StatelessWidget {
@@ -486,11 +690,16 @@ class CourierTile extends StatelessWidget {
       title: name,
       subtitle: [
         if (str(row['phone']).isNotEmpty) str(row['phone']),
-        if (str(row['company_name'], str(row['company'])).isNotEmpty) str(row['company_name'], str(row['company'])),
+        if (str(row['company_name'], str(row['company'])).isNotEmpty)
+          str(row['company_name'], str(row['company'])),
         CrmFormat.ago(row['created_at']),
       ].join(' · '),
       leading: CrmAvatar(label: name, icon: Icons.delivery_dining_outlined),
-      trailing: StatusPill(label: status, dense: true, color: status.toLowerCase() == 'aprobado' ? p.success : null),
+      trailing: StatusPill(
+        label: status,
+        dense: true,
+        color: status.toLowerCase() == 'aprobado' ? p.success : null,
+      ),
     );
   }
 }
@@ -509,10 +718,16 @@ class DeliverySessionTile extends StatelessWidget {
       title: session.courierName,
       subtitle: [
         session.orderId.isEmpty ? 'Sin pedido' : 'Pedido ${session.orderId}',
-        hasPosition ? '${session.lat!.toStringAsFixed(4)}, ${session.lng!.toStringAsFixed(4)}' : 'Sin posición',
+        hasPosition
+            ? '${session.lat!.toStringAsFixed(4)}, ${session.lng!.toStringAsFixed(4)}'
+            : 'Sin posición',
         CrmFormat.ago(session.updatedAt),
       ].join(' · '),
-      leading: CrmAvatar(label: session.courierName, icon: Icons.my_location_rounded, tone: hasPosition ? p.success : p.inkSecondary),
+      leading: CrmAvatar(
+        label: session.courierName,
+        icon: Icons.my_location_rounded,
+        tone: hasPosition ? p.success : p.inkSecondary,
+      ),
       trailing: StatusPill(label: session.status, dense: true),
     );
   }
@@ -536,13 +751,18 @@ class _ResolutionsCard extends StatelessWidget {
       loadingLabel: 'Cargando resoluciones',
       builder: (context, rows, reload) => SectionCard(
         title: 'Resoluciones registradas (${rows.length})',
+        margin: const EdgeInsets.all(6),
+        padding: const EdgeInsets.all(9),
         trailing: IconButton(
           tooltip: 'Recargar',
           onPressed: reload,
           icon: Icon(Icons.refresh_rounded, size: 18, color: p.inkSecondary),
         ),
         child: rows.isEmpty
-            ? Text('Todavía no hay revisiones registradas.', style: TextStyle(fontSize: 12.5, color: p.inkSecondary))
+            ? Text(
+                'Todavía no hay revisiones registradas.',
+                style: TextStyle(fontSize: 12.5, color: p.inkSecondary),
+              )
             : Column(
                 children: [
                   if (rows.length > 40)
@@ -559,9 +779,12 @@ class _ResolutionsCard extends StatelessWidget {
                       title: str(row['justification'], 'Sin justificación'),
                       subtitle: [
                         'Movimiento ${str(row['movement_id']).split(':').last}',
-                        if (str(row['courier_account_id']).isNotEmpty) 'Repartidor ${str(row['courier_account_id'])}',
-                        if (str(row['company_id']).isNotEmpty) 'Empresa ${str(row['company_id'])}',
-                        if (str(row['evidence_reference']).isNotEmpty) 'Evidencia: ${str(row['evidence_reference'])}',
+                        if (str(row['courier_account_id']).isNotEmpty)
+                          'Repartidor ${str(row['courier_account_id'])}',
+                        if (str(row['company_id']).isNotEmpty)
+                          'Empresa ${str(row['company_id'])}',
+                        if (str(row['evidence_reference']).isNotEmpty)
+                          'Evidencia: ${str(row['evidence_reference'])}',
                         CrmFormat.ago(row['created_at']),
                       ].join(' · '),
                       leading: CrmAvatar(

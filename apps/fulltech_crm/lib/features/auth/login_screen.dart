@@ -76,40 +76,42 @@ class _LoginScreenState extends State<LoginScreen> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      // Marca tipográfica: sin logo, solo letra. Limpio y
-                      // moderno, como el encabezado de la app.
-                      Text(
-                        'FULLTECH',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 3.4,
-                          height: 1.1,
-                          color: p.ink,
+                      // Marca tipográfica en una sola línea: FULLTECH sólido en
+                      // tinta y CRM en trazo ligero azul. Sin logo: limpio.
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text.rich(
+                          TextSpan(
+                            children: [
+                              TextSpan(
+                                text: 'FULLTECH',
+                                style: TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 2.2,
+                                  height: 1.15,
+                                  color: p.ink,
+                                ),
+                              ),
+                              TextSpan(
+                                text: '   ',
+                                style: TextStyle(fontSize: 24, height: 1.15),
+                              ),
+                              TextSpan(
+                                text: 'CRM',
+                                style: TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.w300,
+                                  letterSpacing: 2.6,
+                                  height: 1.15,
+                                  color: p.primary,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(width: 22, height: 1, color: p.primary.withValues(alpha: 0.35)),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            child: Text(
-                              'CRM',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 4,
-                                color: p.primary,
-                              ),
-                            ),
-                          ),
-                          Container(width: 22, height: 1, color: p.primary.withValues(alpha: 0.35)),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 10),
                       Text(
                         'ACCESO PRIVADO DEL EQUIPO',
                         textAlign: TextAlign.center,

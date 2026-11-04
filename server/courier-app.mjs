@@ -215,6 +215,28 @@ const money = (value) => {
 };
 const cents = (value) => Math.round(money(value) * 100);
 
+function courierCoordinates(raw) {
+  if (!raw || (raw.latitude == null && raw.lat == null) ||
+    (raw.longitude == null && raw.lng == null)) return null;
+  const latitude = Number(raw.latitude ?? raw.lat);
+  const longitude = Number(raw.longitude ?? raw.lng);
+  return Number.isFinite(latitude) && latitude >= -90 && latitude <= 90 &&
+    Number.isFinite(longitude) && longitude >= -180 && longitude <= 180
+    ? { latitude, longitude } : null;
+}
+
+function courierPickup(order) {
+  const raw = order?.delivery?.pickup ?? order?.pickup ?? order?.delivery?.origin;
+  if (!raw || typeof raw !== 'object') return null;
+  const name = text(raw.name ?? raw.label, 120);
+  const address = text(raw.address, 300);
+  if (!name && !address) return null;
+  return {
+    name, address, reference: text(raw.reference, 200),
+    ...courierCoordinates(raw),
+  };
+}
+
 /**
  * Vista mínima del pedido para el repartidor: lo que necesita para entregar.
  * Nada de costos, márgenes, clientes completos, notas internas ni historial de ventas.
@@ -243,6 +265,7 @@ export function courierOrderDTO(item, { customer = null, kind = null } = {}) {
   const due = Math.max(0, money(total - received));
   const items = Array.isArray(order.items) ? order.items : [];
   const external = delivery.external ?? null;
+  const compensation = delivery.courier_compensation_snapshot;
 
   return {
     id: item.id,
@@ -253,6 +276,12 @@ export function courierOrderDTO(item, { customer = null, kind = null } = {}) {
     delivery_lifecycle: lifecycleOf(order),
     available_actions: courierActionsFor(lifecycleOf(order), kind),
     offer_expires_at: delivery.offer_expires_at ?? null,
+    pickup: courierPickup(order),
+    store_contact_available: Boolean(delivery.pickup?.supplier_id),
+    proof: {
+      required: delivery.proof?.required === true,
+      expires_at: delivery.proof?.expires_at ?? null,
+    },
     customer: {
       display_name: customer?.name ?? order.customer_name ?? order.name ?? null,
       phone: customer?.phone_e164 ?? customer?.phone ?? order.customer_phone ?? order.phone ?? null,
@@ -265,6 +294,15 @@ export function courierOrderDTO(item, { customer = null, kind = null } = {}) {
       fee: delivery.fee ?? order.delivery_fee ?? null,
       assigned_at: external?.assigned_at ?? delivery.assigned_at ?? order.created_at ?? null,
       courier_kind: external ? 'EXTERNAL' : delivery.delivery_user_id ? 'INTERNAL' : null,
+      ...courierCoordinates(location),
+      source_location_id: location.source_location_id ?? null,
+      route: Number.isSafeInteger(delivery.route?.meters) && delivery.route.meters > 0 &&
+        String(delivery.route?.provider ?? '').trim() ? {
+          meters: delivery.route.meters,
+          duration_seconds: Number.isSafeInteger(delivery.route.duration_seconds)
+            ? delivery.route.duration_seconds : null,
+          provider: String(delivery.route.provider),
+        } : null,
     },
     items: items.slice(0, 50).map((row) => ({
       name: row.label ?? row.name ?? row.productName ?? null,
@@ -283,9 +321,18 @@ export function courierOrderDTO(item, { customer = null, kind = null } = {}) {
       pending_verification: pendingVerification,
       due,
     },
-    /* La compensación del repartidor NO existe todavía en el CRM: se dice, no se inventa. */
-    courier_compensation: null,
-    courier_compensation_unavailable: true,
+    courier_compensation: compensation ? {
+      base_cents: compensation.base_cents,
+      incentive_cents: compensation.incentive_cents,
+      bonus_cents: compensation.bonus_cents,
+      total_cents: compensation.total_cents,
+      product_sale_base_cents: compensation.breakdown?.product_sale_base_cents ?? null,
+      product_sale_commission_cents: compensation.breakdown?.product_sale_commission_cents ?? null,
+      route: compensation.breakdown?.policy_snapshot?.route ?? null,
+      estimated: true,
+    } : null,
+    courier_compensation_unavailable: !compensation,
+    courier_compensation_confirmed: false,
     created_at: order.created_at ?? item.created_at ?? null,
     updated_at: order.updated_at ?? item.updated_at ?? null,
   };

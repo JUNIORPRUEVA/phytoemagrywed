@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/text/local_corrector.dart';
-
 /// Aviso discreto MIENTRAS se escribe: «esto se puede corregir».
 ///
 /// Es la pieza que faltaba para que la app se comporte como la PWA: la revisión
@@ -17,7 +16,7 @@ class ChatLiveSuggestion extends StatelessWidget {
     required this.onApply,
     required this.onOpen,
     required this.onDismiss,
-    this.accent = const Color(0xFF1F7A5C),
+    this.accent = const Color(0xFF145BD7),
     this.background = const Color(0xFFE8F5EF),
     this.foreground = const Color(0xFF0E3A2B),
   });
@@ -56,11 +55,38 @@ class ChatLiveSuggestion extends StatelessWidget {
           Icon(Icons.auto_fix_high_rounded, size: 15, color: accent),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              'Sugerencia: $_resumen',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 12, color: foreground, fontWeight: FontWeight.w600),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Sugerencia: $_resumen',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: foreground, fontWeight: FontWeight.w600),
+                ),
+                /*
+                 * EL TEXTO PROPUESTO A LA VISTA.
+                 *
+                 * Antes solo se decía QUÉ se arreglaba («mayúscula al empezar»)
+                 * y había que abrir la hoja para saber cómo quedaría. Con la
+                 * frase corregida aquí, se decide de un vistazo si se pulsa
+                 * Corregir o no: no se aplica nada solo.
+                 */
+                if (review.corrected.isNotEmpty && review.corrected != review.original) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    review.corrected,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      height: 1.25,
+                      color: foreground.withValues(alpha: 0.72),
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
           TextButton(

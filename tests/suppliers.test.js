@@ -9,12 +9,14 @@
  *   · no mezclar artículos propios con los de tiendas.
  */
 import { describe, expect, it } from 'vitest';
+import { handleSupplierRoutes } from '../server/suppliers-routes.mjs';
 import {
   coordinatesFromMapsLink,
   groupItemsBySupplier,
   locationStatus,
   normalizeProductSupplier,
   normalizeSupplier,
+  pickupStoreIds,
   supplierKey,
 } from '../server/suppliers.mjs';
 
@@ -97,6 +99,12 @@ describe('relación producto ↔ tienda', () => {
       supplierKey({ name: 'ferreteria central', phone: '8095551234' }),
     );
     expect(supplierKey({ name: 'Tienda A' })).not.toBe(supplierKey({ name: 'Tienda B' }));
+    expect(supplierKey({ name: 'Tienda A', address: 'Calle 1', phone: '8091111111' })).toBe(
+      supplierKey({ name: 'Tienda A', address: 'Calle 1', phone: '8092222222' }),
+    );
+    expect(supplierKey({ name: 'Tienda A', address: 'Calle 1' })).not.toBe(
+      supplierKey({ name: 'Tienda A', address: 'Calle 2' }),
+    );
   });
 });
 
@@ -136,5 +144,94 @@ describe('agrupación por tienda (recogidas)', () => {
     ]);
     expect(groups).toHaveLength(1);
     expect(groups[0].items).toEqual([{ name: 'Artículo suelto', quantity: 1, unit_cost_cents: 10000 }]);
+  });
+
+  it('detecta varios orígenes aunque un producto propio no indique tienda', () => {
+    expect(pickupStoreIds(items)).toEqual(['sup_a', 'sup_b']);
+    expect(pickupStoreIds([{ supplier_id: 'sup_a' }, { supplierId: 'sup_a' }])).toEqual(['sup_a']);
+  });
+});
+
+describe('privacidad de la ficha de tienda', () => {
+  it('rechaza la lista y el detalle general al repartidor sin consultar datos privados', async () => {
+    for (const route of ['/api/admin/suppliers', '/api/admin/suppliers/sup_1']) {
+      let result;
+      const handled = await handleSupplierRoutes({
+        req: { method: 'GET', url: route }, res: {}, route,
+        ctx: { db: { list: () => { throw new Error('no debe leer tiendas'); } } },
+        actor: { role: 'DELIVERY', id: 'courier_1' },
+        can: permission => permission === 'delivery.tracking.start',
+        json: (_res, status, body) => { result = { status, body }; },
+      });
+      expect(handled).toBe(true);
+      expect(result).toEqual({ status: 403, body: { ok: false, error: 'forbidden' } });
+    }
+  });
+
+  it('separa tiendas por empresa, oculta contactos al agente y conserva el ID al inactivar', async () => {
+    const records = new Map([
+      ['logistics_companies', new Map([
+        ['phytoemagry', { id: 'phytoemagry', active: true }],
+        ['fulltech', { id: 'fulltech', active: true }],
+      ])],
+    ]);
+    const table = name => {
+      if (!records.has(name)) records.set(name, new Map());
+      return records.get(name);
+    };
+    const db = {
+      list: async name => [...table(name).values()],
+      get: async (name, id) => table(name).get(id) ?? null,
+      insert: async (name, row) => { table(name).set(row.id, row); return row; },
+      update: async (name, id, change) => {
+        const row = { ...table(name).get(id), ...change };
+        table(name).set(id, row);
+        return row;
+      },
+    };
+    const request = async ({ method = 'GET', route, body, role = 'ADMIN', permissions }) => {
+      let response;
+      await handleSupplierRoutes({
+        req: { method, url: route }, res: {}, route: route.split('?')[0],
+        ctx: { db, clock: () => new Date('2026-11-03T12:00:00Z') },
+        actor: { id: role.toLowerCase(), role },
+        can: permission => permissions?.includes(permission) ?? (permission === 'admin.full' || permission === 'orders.read'),
+        readJson: async () => body,
+        json: (_res, status, payload) => { response = { status, payload }; },
+      });
+      return response;
+    };
+    const phyto = await request({ method: 'POST', route: '/api/admin/suppliers',
+      body: { company_id: 'phytoemagry', name: 'Tienda Central', address: 'Calle 1', phone: '8091111111' } });
+    const fulltech = await request({ method: 'POST', route: '/api/admin/suppliers',
+      body: { company_id: 'fulltech', name: 'Tienda Central', address: 'Calle 1', phone: '8092222222' } });
+    expect(phyto.status).toBe(201);
+    expect(fulltech.status).toBe(201);
+    const duplicate = await request({ method: 'POST', route: '/api/admin/suppliers',
+      body: { company_id: 'phytoemagry', name: 'Tienda Central', address: 'Calle 1', phone: '8093333333' } });
+    expect(duplicate.payload.error).toBe('duplicate_supplier');
+    const agentList = await request({ route: '/api/admin/suppliers', role: 'AGENT', permissions: ['orders.read'] });
+    expect(agentList.payload.suppliers.map(row => row.id)).toEqual([phyto.payload.supplier.id]);
+    expect(JSON.stringify(agentList.payload)).not.toContain('8091111111');
+    await db.insert('product_suppliers', { id: 'link_private', product_id: 'prod_private', supplier_id: phyto.payload.supplier.id,
+      company_id: 'phytoemagry', cost_cents: 4500, notes: 'Costo interno' });
+    const agentLinks = await request({ route: '/api/admin/products/prod_private/suppliers', role: 'AGENT', permissions: ['orders.read'] });
+    const agentStore = await request({ route: `/api/admin/suppliers/${phyto.payload.supplier.id}`, role: 'AGENT', permissions: ['orders.read'] });
+    expect(agentLinks.payload.links[0].cost_cents).toBeUndefined();
+    expect(agentStore.payload.links[0].notes).toBeUndefined();
+    const foreign = await request({ route: `/api/admin/suppliers/${fulltech.payload.supplier.id}`, role: 'AGENT', permissions: ['orders.read'] });
+    expect(foreign.status).toBe(404);
+    const removed = await request({ method: 'DELETE', route: `/api/admin/suppliers/${phyto.payload.supplier.id}` });
+    expect(removed.payload.supplier.active).toBe(false);
+    expect(await db.get('suppliers', phyto.payload.supplier.id)).not.toBeNull();
+    await db.insert('suppliers', { id: 'legacy_store', name: 'Antigua', address: 'Calle 9', phone: '8094444444' });
+    const before = await request({ route: '/api/admin/suppliers', role: 'AGENT', permissions: ['orders.read'] });
+    expect(before.payload.suppliers.map(row => row.id)).not.toContain('legacy_store');
+    const pending = await request({ route: '/api/admin/suppliers/unassigned' });
+    expect(pending.payload.suppliers.map(row => row.id)).toContain('legacy_store');
+    const assigned = await request({ method: 'POST', route: '/api/admin/suppliers/legacy_store/assign-company',
+      body: { company_id: 'fulltech' } });
+    expect(assigned.status).toBe(200);
+    expect((await db.get('suppliers', 'legacy_store')).company_id).toBe('fulltech');
   });
 });

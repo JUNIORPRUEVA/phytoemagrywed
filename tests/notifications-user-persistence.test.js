@@ -196,7 +196,7 @@ describe('bandeja personal y borrados permanentes', () => {
     await insert(admin, 'survive-server-restart');
     expect((await list(admin)).some((row) => row.id === 'survive-server-restart')).toBe(false);
     expect((await data(admin)).notificationDismissals['wa-failed']).toBe(4);
-    await insert(admin, 'new-after-server-restart');
+    await insert(admin, 'new-after-server-restart', new Date().toISOString());
     expect((await list(admin)).some((row) => row.id === 'new-after-server-restart')).toBe(true);
   });
 });

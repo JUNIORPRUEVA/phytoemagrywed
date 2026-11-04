@@ -3,15 +3,80 @@ import 'package:fulltech_crm/core/net/api_client.dart';
 import 'package:fulltech_crm/core/pos/pos_sale.dart';
 
 PosLine line(String id, int cents, int quantity) => PosLine(
-      variantId: id,
-      productName: 'Producto',
-      presentationName: 'Presentación',
-      unitPriceCents: cents,
-      quantity: quantity,
-    );
+  variantId: id,
+  productName: 'Producto',
+  presentationName: 'Presentación',
+  unitPriceCents: cents,
+  quantity: quantity,
+);
 
 void main() {
   group('total esperado (mismas reglas que el servidor)', () {
+    test('la tienda elegida viaja con la línea y distingue el ticket', () {
+      final selected = PosSaleDraft(
+        mode: 'order',
+        customerId: 'c1',
+        lines: [
+          const PosLine(
+            variantId: 'p1',
+            productName: 'Producto',
+            presentationName: 'Unidad',
+            unitPriceCents: 10000,
+            quantity: 1,
+            supplierId: 'sup_1',
+          ),
+        ],
+      );
+      final withoutStore = PosSaleDraft(
+        mode: 'order',
+        customerId: 'c1',
+        lines: [line('p1', 10000, 1)],
+      );
+      expect(
+        (selected.toCheckoutBody(requestId: 'request-123456789012')['items']
+                as List)
+            .first['supplierId'],
+        'sup_1',
+      );
+      expect(selected.fingerprint(), isNot(withoutStore.fingerprint()));
+    });
+    test(
+      'la conversación acompaña pedido y cotización y cambia la operación',
+      () {
+        final fromChat = PosSaleDraft(
+          mode: 'order',
+          customerId: 'c1',
+          conversationId: 'chat-1',
+          lines: [line('a', 10000, 1)],
+        );
+        final otherChat = PosSaleDraft(
+          mode: 'order',
+          customerId: 'c1',
+          conversationId: 'chat-2',
+          lines: [line('a', 10000, 1)],
+        );
+        expect(
+          fromChat.toCheckoutBody(
+            requestId: 'request-123456789012',
+          )['conversationId'],
+          'chat-1',
+        );
+        expect(fromChat.fingerprint(), isNot(otherChat.fingerprint()));
+        final quote = PosSaleDraft(
+          mode: 'quote',
+          customerId: 'c1',
+          conversationId: 'chat-1',
+          lines: [line('a', 10000, 1)],
+        );
+        expect(
+          quote.toQuoteBody(
+            requestId: 'request-123456789012',
+          )['conversationId'],
+          'chat-1',
+        );
+      },
+    );
+
     test('suma importes por línea en centavos', () {
       final draft = PosSaleDraft(
         mode: 'order',
@@ -22,16 +87,15 @@ void main() {
       expect(draft.expectedTotalCents, 250100 + 2997);
     });
 
-    test('el envío se redondea a pesos enteros, como exige el servidor', () {
+    test('el envío conserva centavos como exige el servidor', () {
       final draft = PosSaleDraft(
         mode: 'invoice',
         customerId: 'c1',
         lines: [line('a', 10000, 1)],
         deliveryFeeCents: 15050,
       );
-      // 150,50 → 151 pesos: el servidor rechaza decimales en `deliveryFee`.
-      expect(draft.deliveryFeePesos, 151);
-      expect(draft.expectedTotalCents, 10000 + 15100);
+      expect(draft.expectedTotalCents, 10000 + 15050);
+      expect(draft.toCheckoutBody(requestId: 'request-1234567890')['deliveryFee'], 150.5);
     });
 
     test('expectedTotal viaja como entero en el cuerpo', () {
@@ -55,7 +119,11 @@ void main() {
   group('idempotencia de la operación', () {
     test('el mismo borrador conserva el requestId al reintentar', () {
       final operation = PosOperation(keyFactory: () => 'pos_fixed_key_0001');
-      final draft = PosSaleDraft(mode: 'order', customerId: 'c1', lines: [line('a', 10000, 1)]);
+      final draft = PosSaleDraft(
+        mode: 'order',
+        customerId: 'c1',
+        lines: [line('a', 10000, 1)],
+      );
 
       final first = operation.requestIdFor(draft);
       final second = operation.requestIdFor(draft);
@@ -66,8 +134,14 @@ void main() {
 
     test('cambiar el contenido genera OTRA operación', () {
       var counter = 0;
-      final operation = PosOperation(keyFactory: () => 'pos_generated_${++counter}_abcdef');
-      final base = PosSaleDraft(mode: 'order', customerId: 'c1', lines: [line('a', 10000, 1)]);
+      final operation = PosOperation(
+        keyFactory: () => 'pos_generated_${++counter}_abcdef',
+      );
+      final base = PosSaleDraft(
+        mode: 'order',
+        customerId: 'c1',
+        lines: [line('a', 10000, 1)],
+      );
 
       final first = operation.requestIdFor(base);
       final changed = PosSaleDraft(
@@ -82,8 +156,14 @@ void main() {
 
     test('cambiar solo el envío también cuenta como otra operación', () {
       var counter = 0;
-      final operation = PosOperation(keyFactory: () => 'pos_generated_${++counter}_abcdef');
-      final base = PosSaleDraft(mode: 'order', customerId: 'c1', lines: [line('a', 10000, 1)]);
+      final operation = PosOperation(
+        keyFactory: () => 'pos_generated_${++counter}_abcdef',
+      );
+      final base = PosSaleDraft(
+        mode: 'order',
+        customerId: 'c1',
+        lines: [line('a', 10000, 1)],
+      );
       final first = operation.requestIdFor(base);
       final withFee = PosSaleDraft(
         mode: 'order',
@@ -97,8 +177,14 @@ void main() {
 
     test('después de cobrar, la siguiente venta usa otra clave', () {
       var counter = 0;
-      final operation = PosOperation(keyFactory: () => 'pos_generated_${++counter}_abcdef');
-      final draft = PosSaleDraft(mode: 'order', customerId: 'c1', lines: [line('a', 10000, 1)]);
+      final operation = PosOperation(
+        keyFactory: () => 'pos_generated_${++counter}_abcdef',
+      );
+      final draft = PosSaleDraft(
+        mode: 'order',
+        customerId: 'c1',
+        lines: [line('a', 10000, 1)],
+      );
 
       final first = operation.requestIdFor(draft);
       operation.reset();
@@ -108,8 +194,12 @@ void main() {
     });
 
     test('la clave cumple el contrato del servidor', () {
-      final operation = PosOperation(keyFactory: () => 'clave con espacios y ñ');
-      final key = operation.requestIdFor(PosSaleDraft(mode: 'order', customerId: 'c1', lines: [line('a', 1, 1)]));
+      final operation = PosOperation(
+        keyFactory: () => 'clave con espacios y ñ',
+      );
+      final key = operation.requestIdFor(
+        PosSaleDraft(mode: 'order', customerId: 'c1', lines: [line('a', 1, 1)]),
+      );
       expect(ApiClient.operationKeyPattern.hasMatch(key), isTrue);
       expect(key.length, greaterThanOrEqualTo(16));
     });
@@ -123,37 +213,58 @@ void main() {
     });
 
     test('price_changed no registra nada', () {
-      final outcome = PosOutcome.fromError(ApiException(409, 'Los precios cambiaron.', code: 'price_changed'));
+      final outcome = PosOutcome.fromError(
+        ApiException(409, 'Los precios cambiaron.', code: 'price_changed'),
+      );
       expect(outcome.kind, PosOutcomeKind.priceChanged);
       expect(outcome.ok, isFalse);
     });
 
     test('open_orders pide confirmación explícita', () {
-      final outcome = PosOutcome.fromError(ApiException(409, 'Pedido abierto', code: 'open_orders'));
+      final outcome = PosOutcome.fromError(
+        ApiException(409, 'Pedido abierto', code: 'open_orders'),
+      );
       expect(outcome.kind, PosOutcomeKind.openOrdersRequiresAck);
     });
 
     test('un rechazo de datos es rechazo, no incierto', () {
-      final outcome = PosOutcome.fromError(ApiException(422, 'Falta el cliente.', code: 'invalid_customer'));
+      final outcome = PosOutcome.fromError(
+        ApiException(422, 'Falta el cliente.', code: 'invalid_customer'),
+      );
       expect(outcome.kind, PosOutcomeKind.rejected);
     });
 
-    test('el envoltorio de idempotencia del servidor se trata como INCIERTO', () {
-      final uncertain = PosOutcome.fromError(
-        ApiException(409, 'El resultado necesita revisión.', code: 'offline_operation_uncertain'),
-      );
-      expect(uncertain.kind, PosOutcomeKind.uncertain);
+    test(
+      'el envoltorio de idempotencia del servidor se trata como INCIERTO',
+      () {
+        final uncertain = PosOutcome.fromError(
+          ApiException(
+            409,
+            'El resultado necesita revisión.',
+            code: 'offline_operation_uncertain',
+          ),
+        );
+        expect(uncertain.kind, PosOutcomeKind.uncertain);
 
-      final reused = PosOutcome.fromError(
-        ApiException(409, 'Esta operación tiene otros datos.', code: 'operation_reused'),
-      );
-      expect(reused.kind, PosOutcomeKind.uncertain);
-    });
+        final reused = PosOutcome.fromError(
+          ApiException(
+            409,
+            'Esta operación tiene otros datos.',
+            code: 'operation_reused',
+          ),
+        );
+        expect(reused.kind, PosOutcomeKind.uncertain);
+      },
+    );
 
     test('respuesta correcta puede venir marcada como duplicada', () {
       final created = PosOutcome.fromResponse({
         'ok': true,
-        'document': {'id': 'pos_1', 'number': 'F-1', 'sale': {'total_cents': 25000}},
+        'document': {
+          'id': 'pos_1',
+          'number': 'F-1',
+          'sale': {'total_cents': 25000},
+        },
       });
       expect(created.kind, PosOutcomeKind.created);
       expect(created.documentNumber, 'F-1');
@@ -171,19 +282,35 @@ void main() {
 
   group('validación del borrador', () {
     test('sin cliente no se cobra', () {
-      final draft = PosSaleDraft(mode: 'order', customerId: '', lines: [line('a', 1, 1)]);
+      final draft = PosSaleDraft(
+        mode: 'order',
+        customerId: '',
+        lines: [line('a', 1, 1)],
+      );
       expect(draft.validate(), isNotNull);
     });
 
     test('sin artículos no se cobra', () {
-      final draft = PosSaleDraft(mode: 'order', customerId: 'c1', lines: const []);
+      final draft = PosSaleDraft(
+        mode: 'order',
+        customerId: 'c1',
+        lines: const [],
+      );
       expect(draft.validate(), isNotNull);
     });
 
     test('a domicilio exige dirección, pero una cotización no', () {
-      final order = PosSaleDraft(mode: 'order', customerId: 'c1', lines: [line('a', 1, 1)]);
+      final order = PosSaleDraft(
+        mode: 'order',
+        customerId: 'c1',
+        lines: [line('a', 1, 1)],
+      );
       expect(order.validate(), contains('dirección'));
-      final quote = PosSaleDraft(mode: 'quote', customerId: 'c1', lines: [line('a', 1, 1)]);
+      final quote = PosSaleDraft(
+        mode: 'quote',
+        customerId: 'c1',
+        lines: [line('a', 1, 1)],
+      );
       expect(quote.validate(), isNull);
     });
   });

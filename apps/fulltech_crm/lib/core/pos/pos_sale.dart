@@ -24,6 +24,7 @@ class PosLine {
     this.manualKind,
     this.manualPrice,
     this.manualCost,
+    this.supplierId = '',
   });
 
   final String variantId;
@@ -44,6 +45,7 @@ class PosLine {
   final String? manualKind;
   final double? manualPrice;
   final double? manualCost;
+  final String supplierId;
 
   bool get isManual => manualName != null && manualName!.isNotEmpty;
 
@@ -51,7 +53,8 @@ class PosLine {
 
   /// `discountCents(gross, line.discount)` de `pos-math.js`.
   int get lineDiscountCents {
-    if (discountType == 'none' || !discountValue.isFinite || discountValue <= 0) return 0;
+    if (discountType == 'none' || !discountValue.isFinite || discountValue <= 0)
+      return 0;
     final cents = discountType == 'percent'
         ? (grossCents * discountValue / 100).round()
         : (discountValue * 100).round();
@@ -63,32 +66,39 @@ class PosLine {
   int get netCents => grossCents - lineDiscountCents;
 
   Map<String, dynamic> toJson() => {
-        'variantId': variantId,
-        'quantity': quantity,
-        if (discountType != 'none' && discountValue > 0)
-          'discount': {'type': discountType, 'value': discountValue},
-        if (isManual)
-          'manual': {
-            'name': manualName,
-            'kind': manualKind ?? 'product',
-            'price': manualPrice ?? unitPriceCents / 100,
-            if (manualCost != null) 'cost': manualCost,
-          },
-      };
+    'variantId': variantId,
+    'quantity': quantity,
+    if (supplierId.isNotEmpty) 'supplierId': supplierId,
+    if (discountType != 'none' && discountValue > 0)
+      'discount': {'type': discountType, 'value': discountValue},
+    if (isManual)
+      'manual': {
+        'name': manualName,
+        'kind': manualKind ?? 'product',
+        'price': manualPrice ?? unitPriceCents / 100,
+        if (manualCost != null) 'cost': manualCost,
+      },
+  };
 
-  PosLine copyWith({int? quantity, String? discountType, double? discountValue, int? unitPriceCents}) => PosLine(
-        variantId: variantId,
-        productName: productName,
-        presentationName: presentationName,
-        unitPriceCents: unitPriceCents ?? this.unitPriceCents,
-        quantity: quantity ?? this.quantity,
-        discountType: discountType ?? this.discountType,
-        discountValue: discountValue ?? this.discountValue,
-        manualName: manualName,
-        manualKind: manualKind,
-        manualPrice: manualPrice,
-        manualCost: manualCost,
-      );
+  PosLine copyWith({
+    int? quantity,
+    String? discountType,
+    double? discountValue,
+    int? unitPriceCents,
+  }) => PosLine(
+    variantId: variantId,
+    productName: productName,
+    presentationName: presentationName,
+    unitPriceCents: unitPriceCents ?? this.unitPriceCents,
+    quantity: quantity ?? this.quantity,
+    discountType: discountType ?? this.discountType,
+    discountValue: discountValue ?? this.discountValue,
+    manualName: manualName,
+    manualKind: manualKind,
+    manualPrice: manualPrice,
+    manualCost: manualCost,
+    supplierId: supplierId,
+  );
 }
 
 /// Borrador de venta: lo que el operador ve antes de cobrar.
@@ -97,7 +107,9 @@ class PosSaleDraft {
     required this.mode,
     required this.customerId,
     required this.lines,
+    this.conversationId = '',
     this.deliveryFeeCents = 0,
+    this.deliveryQuoteId = '',
     this.notes = '',
     this.address = '',
     this.deliveryMethod = 'delivery',
@@ -115,8 +127,10 @@ class PosSaleDraft {
   /// `order` | `invoice` | `quote`
   final String mode;
   final String customerId;
+  final String conversationId;
   final List<PosLine> lines;
   final int deliveryFeeCents;
+  final String deliveryQuoteId;
   final String notes;
   final String address;
   final String deliveryMethod;
@@ -148,7 +162,8 @@ class PosSaleDraft {
 
   bool get isQuote => mode == 'quote';
 
-  int get subtotalCents => lines.fold<int>(0, (sum, line) => sum + line.netCents);
+  int get subtotalCents =>
+      lines.fold<int>(0, (sum, line) => sum + line.netCents);
 
   /// Céntimos de descuento, con la MISMA regla que `discountCents()` de
   /// `public/admin/pos-math.js`: porcentaje → `round(base*valor/100)`,
@@ -157,7 +172,9 @@ class PosSaleDraft {
   int discountCentsFor(int baseCents) {
     final value = discountValue;
     if (discountType == 'none' || !value.isFinite || value <= 0) return 0;
-    final cents = discountType == 'percent' ? (baseCents * value / 100).round() : (value * 100).round();
+    final cents = discountType == 'percent'
+        ? (baseCents * value / 100).round()
+        : (value * 100).round();
     return cents < 0 ? 0 : cents;
   }
 
@@ -166,29 +183,32 @@ class PosSaleDraft {
   /// El descuento pide más de lo que hay: el servidor lo rechazaría (422).
   bool get discountExceedsSubtotal => discountCents > subtotalCents;
 
-  /// El servidor exige el envío en **pesos enteros**
-  /// (`Number.isInteger(input.deliveryFee)`). Se redondea aquí para que el
-  /// `expectedTotal` coincida con el suyo; si no, un envío con céntimos se
-  /// rechazaba con 409 `price_changed` y la venta no se podía cerrar.
-  int get deliveryFeePesos => (deliveryFeeCents / 100).round();
-
-  int get expectedTotalCents => subtotalCents - discountCents + deliveryFeePesos * 100;
+  int get expectedTotalCents =>
+      subtotalCents - discountCents + deliveryFeeCents;
 
   /// Reglas mínimas antes de molestar al servidor.
   String? validate() {
     if (customerId.isEmpty) return 'Elige un cliente antes de guardar.';
     if (lines.isEmpty) return 'Agrega al menos un artículo.';
-    if (lines.any((line) => line.quantity < 1 || line.quantity > 9999)) return 'La cantidad debe estar entre 1 y 9999.';
-    if (lines.any((line) => line.discountType == 'percent' && line.discountValue > 100)) {
+    if (lines.any((line) => line.quantity < 1 || line.quantity > 9999))
+      return 'La cantidad debe estar entre 1 y 9999.';
+    if (lines.any(
+      (line) => line.discountType == 'percent' && line.discountValue > 100,
+    )) {
       return 'El porcentaje de una línea no puede superar 100.';
     }
-    if (lines.any((line) => line.isManual && (line.manualName ?? '').trim().isEmpty)) {
+    if (lines.any(
+      (line) => line.isManual && (line.manualName ?? '').trim().isEmpty,
+    )) {
       return 'La venta fuera de inventario necesita una descripción.';
     }
     if (deliveryFeeCents < 0) return 'El envío no puede ser negativo.';
-    if (discountType == 'percent' && discountValue > 100) return 'El porcentaje no puede superar 100.';
-    if (discountExceedsSubtotal) return 'El descuento supera el importe del ticket.';
-    if (!isQuote && deliveryMethod == 'delivery' && address.trim().isEmpty) return 'Escribe la dirección de entrega.';
+    if (discountType == 'percent' && discountValue > 100)
+      return 'El porcentaje no puede superar 100.';
+    if (discountExceedsSubtotal)
+      return 'El descuento supera el importe del ticket.';
+    if (!isQuote && deliveryMethod == 'delivery' && address.trim().isEmpty)
+      return 'Escribe la dirección de entrega.';
     if (scheduledAt.isNotEmpty) {
       final when = DateTime.tryParse(scheduledAt);
       if (when == null) return 'La fecha programada no es válida.';
@@ -201,41 +221,49 @@ class PosSaleDraft {
   }
 
   /// Cuerpo de `/api/admin/pos/checkout` (pedido o factura).
-  Map<String, dynamic> toCheckoutBody({required String requestId, bool acknowledgeOpen = false}) => {
-        'mode': mode,
-        'requestId': requestId,
-        'customerId': customerId,
-        'items': [for (final line in lines) line.toJson()],
-        'deliveryFee': deliveryFeePesos,
-        if (discountType != 'none' && discountValue > 0) 'discount': {'type': discountType, 'value': discountValue},
-        if (quoteId.isNotEmpty) 'quoteId': quoteId,
-        if (ticketId.isNotEmpty) 'ticketId': ticketId,
-        if (ticketId.isNotEmpty) 'ticketVersion': ticketVersion,
-        'paymentMethod': paymentMethod,
-        'paymentStatus': paid ? 'paid' : 'pending',
-        'deliveryMethod': deliveryMethod,
-        'notes': notes,
-        'address': address,
-        if (scheduledAt.isNotEmpty) 'scheduledAt': scheduledAt,
-        if (deliveryReference.isNotEmpty) 'deliveryReference': deliveryReference,
-        // Contrato exacto: centavos, entero. Si el servidor calcula otra cosa,
-        // contesta `price_changed` y aquí no se registra NADA.
-        'expectedTotal': expectedTotalCents,
-        if (acknowledgeOpen) 'acknowledgeOpen': true,
-      };
+  Map<String, dynamic> toCheckoutBody({
+    required String requestId,
+    bool acknowledgeOpen = false,
+  }) => {
+    'mode': mode,
+    'requestId': requestId,
+    'customerId': customerId,
+    if (conversationId.isNotEmpty) 'conversationId': conversationId,
+    'items': [for (final line in lines) line.toJson()],
+    'deliveryFee': deliveryFeeCents / 100,
+    if (deliveryQuoteId.isNotEmpty) 'deliveryQuoteId': deliveryQuoteId,
+    if (discountType != 'none' && discountValue > 0)
+      'discount': {'type': discountType, 'value': discountValue},
+    if (quoteId.isNotEmpty) 'quoteId': quoteId,
+    if (ticketId.isNotEmpty) 'ticketId': ticketId,
+    if (ticketId.isNotEmpty) 'ticketVersion': ticketVersion,
+    'paymentMethod': paymentMethod,
+    'paymentStatus': paid ? 'paid' : 'pending',
+    'deliveryMethod': deliveryMethod,
+    'notes': notes,
+    'address': address,
+    if (scheduledAt.isNotEmpty) 'scheduledAt': scheduledAt,
+    if (deliveryReference.isNotEmpty) 'deliveryReference': deliveryReference,
+    // Contrato exacto: centavos, entero. Si el servidor calcula otra cosa,
+    // contesta `price_changed` y aquí no se registra NADA.
+    'expectedTotal': expectedTotalCents,
+    if (acknowledgeOpen) 'acknowledgeOpen': true,
+  };
 
   /// Cuerpo de `/api/admin/pos/quotes`.
   Map<String, dynamic> toQuoteBody({required String requestId}) => {
-        'requestId': requestId,
-        'customerId': customerId,
-        'items': [for (final line in lines) line.toJson()],
-        'deliveryFee': deliveryFeePesos,
-        if (discountType != 'none' && discountValue > 0) 'discount': {'type': discountType, 'value': discountValue},
-        'paymentMethod': paymentMethod,
-        'notes': notes,
-        'address': address,
-        'expectedTotal': expectedTotalCents,
-      };
+    'requestId': requestId,
+    'customerId': customerId,
+    if (conversationId.isNotEmpty) 'conversationId': conversationId,
+    'items': [for (final line in lines) line.toJson()],
+    'deliveryFee': deliveryFeeCents / 100,
+    if (discountType != 'none' && discountValue > 0)
+      'discount': {'type': discountType, 'value': discountValue},
+    'paymentMethod': paymentMethod,
+    'notes': notes,
+    'address': address,
+    'expectedTotal': expectedTotalCents,
+  };
 
   /// Huella estable del contenido (sin `requestId` ni `acknowledgeOpen`).
   ///
@@ -244,7 +272,9 @@ class PosSaleDraft {
     final canonical = [
       mode,
       customerId,
+      conversationId,
       deliveryFeeCents.toString(),
+      deliveryQuoteId,
       discountType,
       discountValue.toString(),
       quoteId,
@@ -255,7 +285,8 @@ class PosSaleDraft {
       deliveryMethod,
       paymentMethod,
       paid ? '1' : '0',
-      for (final line in lines) '${line.variantId}:${line.unitPriceCents}:${line.quantity}',
+      for (final line in lines)
+        '${line.variantId}:${line.unitPriceCents}:${line.quantity}:${line.discountType}:${line.discountValue}:${line.supplierId}',
     ].join('|');
     return _fnv1a(canonical);
   }
@@ -276,7 +307,8 @@ class PosSaleDraft {
 /// un timeout NO duplica la venta (el servidor devuelve el documento anterior).
 /// Al cobrar con éxito, o al cambiar los datos, se genera una clave nueva.
 class PosOperation {
-  PosOperation({String Function()? keyFactory}) : _keyFactory = keyFactory ?? _defaultKey;
+  PosOperation({String Function()? keyFactory})
+    : _keyFactory = keyFactory ?? _defaultKey;
 
   static const int _minLength = 16;
   static const int _maxLength = 100;
@@ -369,16 +401,25 @@ class PosOutcome {
   final String orderId;
   final int? totalCents;
 
-  bool get ok => kind == PosOutcomeKind.created || kind == PosOutcomeKind.duplicate;
+  bool get ok =>
+      kind == PosOutcomeKind.created || kind == PosOutcomeKind.duplicate;
 
   /// Interpreta una respuesta correcta de `/pos/checkout` o `/pos/quotes`.
   factory PosOutcome.fromResponse(Map<String, dynamic> data) {
-    final document = data['document'] is Map ? Map<String, dynamic>.from(data['document'] as Map) : <String, dynamic>{};
-    final order = data['order'] is Map ? Map<String, dynamic>.from(data['order'] as Map) : <String, dynamic>{};
-    final sale = document['sale'] is Map ? Map<String, dynamic>.from(document['sale'] as Map) : <String, dynamic>{};
+    final document = data['document'] is Map
+        ? Map<String, dynamic>.from(data['document'] as Map)
+        : <String, dynamic>{};
+    final order = data['order'] is Map
+        ? Map<String, dynamic>.from(data['order'] as Map)
+        : <String, dynamic>{};
+    final sale = document['sale'] is Map
+        ? Map<String, dynamic>.from(document['sale'] as Map)
+        : <String, dynamic>{};
     final total = sale['total_cents'];
     return PosOutcome(
-      kind: data['duplicate'] == true ? PosOutcomeKind.duplicate : PosOutcomeKind.created,
+      kind: data['duplicate'] == true
+          ? PosOutcomeKind.duplicate
+          : PosOutcomeKind.created,
       documentNumber: '${document['number'] ?? order['order_number'] ?? ''}',
       quoteId: '${data['quoteId'] ?? document['id'] ?? ''}',
       orderId: '${order['id'] ?? ''}',
@@ -392,7 +433,8 @@ class PosOutcome {
     if (error.isUncertain) {
       return PosOutcome(
         kind: PosOutcomeKind.uncertain,
-        message: 'No sabemos si la venta llegó al servidor. No se ha vuelto a enviar.',
+        message:
+            'No sabemos si la venta llegó al servidor. No se ha vuelto a enviar.',
         code: 'no_response',
       );
     }
@@ -400,13 +442,17 @@ class PosOutcome {
       case 'price_changed':
         return PosOutcome(
           kind: PosOutcomeKind.priceChanged,
-          message: error.message.isEmpty ? 'Los precios cambiaron. Revisa el ticket y vuelve a cobrar.' : error.message,
+          message: error.message.isEmpty
+              ? 'Los precios cambiaron. Revisa el ticket y vuelve a cobrar.'
+              : error.message,
           code: error.code,
         );
       case 'open_orders':
         return PosOutcome(
           kind: PosOutcomeKind.openOrdersRequiresAck,
-          message: error.message.isEmpty ? 'Este cliente ya tiene un pedido abierto. ¿Crear otro?' : error.message,
+          message: error.message.isEmpty
+              ? 'Este cliente ya tiene un pedido abierto. ¿Crear otro?'
+              : error.message,
           code: error.code,
         );
       // Respuestas del envoltorio de idempotencia del servidor
@@ -424,7 +470,9 @@ class PosOutcome {
         );
       default:
         return PosOutcome(
-          kind: error.isUnauthorized || error.statusCode == 0 ? PosOutcomeKind.uncertain : PosOutcomeKind.rejected,
+          kind: error.isUnauthorized || error.statusCode == 0
+              ? PosOutcomeKind.uncertain
+              : PosOutcomeKind.rejected,
           message: error.message,
           code: error.code,
         );

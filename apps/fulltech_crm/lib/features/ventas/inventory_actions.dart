@@ -5,6 +5,7 @@ import '../../core/net/operation_key.dart';
 import '../../core/theme/crm_theme.dart';
 import '../../data/crm_repository.dart';
 import '../common/crm_ui.dart';
+import '../pos_desktop/pos_toast.dart';
 
 /// Diálogos de las escrituras de inventario legacy (cápsulas compartidas).
 ///
@@ -20,12 +21,12 @@ import '../common/crm_ui.dart';
 enum InventoryAction { restock, adjustIn, adjustOut, count, cost }
 
 String inventoryActionLabel(InventoryAction action) => switch (action) {
-      InventoryAction.restock => 'Reponer',
-      InventoryAction.adjustIn => 'Ajustar +',
-      InventoryAction.adjustOut => 'Ajustar −',
-      InventoryAction.count => 'Recuento',
-      InventoryAction.cost => 'Costo',
-    };
+  InventoryAction.restock => 'Reponer',
+  InventoryAction.adjustIn => 'Ajustar +',
+  InventoryAction.adjustOut => 'Ajustar −',
+  InventoryAction.count => 'Recuento',
+  InventoryAction.cost => 'Costo',
+};
 
 /// Ejecuta la acción elegida. Devuelve `true` si el servidor la aceptó.
 Future<bool> runInventoryAction(
@@ -59,44 +60,44 @@ Future<bool> runInventoryAction(
   try {
     final result = await switch (action) {
       InventoryAction.restock => repository.restockInventory(
-          quantity: form.quantity!,
-          unitCost: form.unitCost,
-          reason: form.reason,
-          operationKey: key,
-        ),
+        quantity: form.quantity!,
+        unitCost: form.unitCost,
+        reason: form.reason,
+        operationKey: key,
+      ),
       InventoryAction.adjustIn => repository.adjustInventory(
-          incoming: true,
-          quantity: form.quantity!,
-          unitCost: form.unitCost,
-          reason: form.reason,
-          operationKey: key,
-        ),
+        incoming: true,
+        quantity: form.quantity!,
+        unitCost: form.unitCost,
+        reason: form.reason,
+        operationKey: key,
+      ),
       InventoryAction.adjustOut => repository.adjustInventory(
-          incoming: false,
-          quantity: form.quantity!,
-          unitCost: form.unitCost,
-          reason: form.reason,
-          operationKey: key,
-        ),
+        incoming: false,
+        quantity: form.quantity!,
+        unitCost: form.unitCost,
+        reason: form.reason,
+        operationKey: key,
+      ),
       InventoryAction.count => repository.countInventory(
-          countedQuantity: form.quantity!,
-          reason: form.reason,
-          operationKey: key,
-        ),
+        countedQuantity: form.quantity!,
+        reason: form.reason,
+        operationKey: key,
+      ),
       InventoryAction.cost => repository.updateInventoryCost(
-          unitCost: form.unitCost!,
-          operationKey: key,
-        ),
+        unitCost: form.unitCost!,
+        operationKey: key,
+      ),
     };
     // El servidor devuelve el inventario ya recalculado: se muestra SU cifra.
     final stock = inventoryStockFromResponse(result);
     if (!context.mounted) return true;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(stock == null
-            ? 'Movimiento registrado.'
-            : 'Movimiento registrado. El servidor informa de $stock cápsulas en stock.'),
-      ),
+    posToast(
+      context,
+      stock == null
+          ? 'Movimiento registrado.'
+          : 'Movimiento registrado. El servidor informa de $stock cápsulas en stock.',
+      tone: CrmToastTone.success,
     );
     return true;
   } on ApiException catch (exception) {
@@ -186,8 +187,12 @@ class _ActionDialogState extends State<_ActionDialog> {
   }
 
   void _submit() {
-    final quantity = _needsQuantity ? int.tryParse(_quantity.text.trim()) : null;
-    final cost = _needsCost ? double.tryParse(_cost.text.trim().replaceAll(',', '.')) : null;
+    final quantity = _needsQuantity
+        ? int.tryParse(_quantity.text.trim())
+        : null;
+    final cost = _needsCost
+        ? double.tryParse(_cost.text.trim().replaceAll(',', '.'))
+        : null;
     if (_needsQuantity && (quantity == null || quantity < 1)) {
       setState(() => _error = 'Escribe una cantidad entera mayor que cero.');
       return;
@@ -196,7 +201,13 @@ class _ActionDialogState extends State<_ActionDialog> {
       setState(() => _error = 'Escribe un costo válido.');
       return;
     }
-    Navigator.of(context).pop(_ActionForm(quantity: quantity, unitCost: cost, reason: _reason.text.trim()));
+    Navigator.of(context).pop(
+      _ActionForm(
+        quantity: quantity,
+        unitCost: cost,
+        reason: _reason.text.trim(),
+      ),
+    );
   }
 
   @override
@@ -210,7 +221,8 @@ class _ActionDialogState extends State<_ActionDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (widget.action == InventoryAction.count && widget.currentStock != null)
+            if (widget.action == InventoryAction.count &&
+                widget.currentStock != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: Text(
@@ -232,30 +244,48 @@ class _ActionDialogState extends State<_ActionDialog> {
                 autofocus: true,
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
-                  labelText: widget.action == InventoryAction.count ? 'Cápsulas contadas' : 'Cantidad (cápsulas)',
+                  labelText: widget.action == InventoryAction.count
+                      ? 'Cápsulas contadas'
+                      : 'Cantidad (cápsulas)',
                 ),
               ),
             if (_needsCost) ...[
               const SizedBox(height: 10),
               TextField(
                 controller: _cost,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(labelText: 'Costo por cápsula'),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'Costo por cápsula',
+                ),
               ),
             ],
             const SizedBox(height: 10),
             TextField(
               controller: _reason,
               maxLength: 120,
-              decoration: const InputDecoration(labelText: 'Motivo (queda en auditoría)'),
+              decoration: const InputDecoration(
+                labelText: 'Motivo (queda en auditoría)',
+              ),
             ),
             if (_error != null)
-              Text(_error!, style: TextStyle(fontSize: 12.5, color: p.danger, fontWeight: FontWeight.w600)),
+              Text(
+                _error!,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: p.danger,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
           ],
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
         FilledButton(onPressed: _submit, child: const Text('Registrar')),
       ],
     );

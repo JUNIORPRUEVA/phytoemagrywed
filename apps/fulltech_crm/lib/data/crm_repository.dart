@@ -10,6 +10,24 @@ class CrmRepository {
 
   ApiClient get api => _api;
 
+  // Controles persistentes del agente de chat. El envío automático aún no está activo.
+  Future<Map<String, dynamic>> aiChatGlobalControl() =>
+      _api.get('/api/admin/ai/chat-controls');
+  Future<Map<String, dynamic>> setAiChatGlobalControl(bool enabled) =>
+      _api.post('/api/admin/ai/chat-controls', {'enabled': enabled});
+  Future<Map<String, dynamic>> aiChatConversationControl(
+    String conversationId,
+  ) => _api.get(
+    '/api/admin/ai/chat-controls/${Uri.encodeComponent(conversationId)}',
+  );
+  Future<Map<String, dynamic>> setAiChatConversationControl(
+    String conversationId,
+    String mode,
+  ) => _api.post(
+    '/api/admin/ai/chat-controls/${Uri.encodeComponent(conversationId)}',
+    {'mode': mode},
+  );
+
   // ------------------------------------------------------------------ sesión
   Future<void> restore() => _api.restoreSession();
 
@@ -19,7 +37,10 @@ class CrmRepository {
     return CrmSession.fromJson(data);
   }
 
-  Future<CrmSession> login({required String username, required String password}) async {
+  Future<CrmSession> login({
+    required String username,
+    required String password,
+  }) async {
     final data = await _api.post('/api/admin/auth/login', {
       'username': username.trim(),
       'password': password,
@@ -31,7 +52,8 @@ class CrmRepository {
       'permissions': auth['permissions'] ?? data['permissions'],
     });
     // El servidor devuelve el usuario pero no siempre los permisos: se piden.
-    if (!parsed.authenticated) throw ApiException(401, 'Usuario o contraseña incorrectos.');
+    if (!parsed.authenticated)
+      throw ApiException(401, 'Usuario o contraseña incorrectos.');
     return parsed.user == null ? session() : parsed;
   }
 
@@ -48,23 +70,32 @@ class CrmRepository {
   /// Paquete ligero del panel: pedidos, clientes, bandeja, recuentos,
   /// seguimientos, entregas y avisos en UNA petición.
   Future<Map<String, dynamic>> snapshot({bool light = true}) async {
-    final data = await _api.get('/api/admin/data', query: {if (light) 'light': '1'});
+    final data = await _api.get(
+      '/api/admin/data',
+      query: {if (light) 'light': '1'},
+    );
     if (data['ok'] == false) throw ApiException(401, 'Sesión no válida.');
     return data;
   }
 
   // ------------------------------------------------------------------- chats
-  Future<Map<String, dynamic>> conversations({String filter = 'todos', String query = '', String sort = 'recent', String stage = ''}) =>
-      _api.get('/api/admin/conversations', query: {
-        'filter': filter,
-        'q': query,
-        'sort': sort,
-        'stage': stage,
-      });
+  Future<Map<String, dynamic>> conversations({
+    String filter = 'todos',
+    String query = '',
+    String sort = 'recent',
+    String stage = '',
+  }) => _api.get(
+    '/api/admin/conversations',
+    query: {'filter': filter, 'q': query, 'sort': sort, 'stage': stage},
+  );
 
   Future<List<ChatMessage>> messages(String conversationId) async {
-    final data = await _api.get('/api/admin/conversations/${Uri.encodeComponent(conversationId)}/messages');
-    return listv(data['messages'] ?? data['items']).map(ChatMessage.fromJson).toList();
+    final data = await _api.get(
+      '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/messages',
+    );
+    return listv(
+      data['messages'] ?? data['items'],
+    ).map(ChatMessage.fromJson).toList();
   }
 
   /// Abre (o crea) la conversación de un teléfono y, si se indica, envía el
@@ -73,22 +104,50 @@ class CrmRepository {
     required String phone,
     String name = '',
     String body = '',
-  }) =>
-      _api.post('/api/admin/conversations/start', {
-        'phone': phone,
-        'name': name,
-        'body': body,
-      });
+  }) => _api.post('/api/admin/conversations/start', {
+    'phone': phone,
+    'name': name,
+    'body': body,
+  });
 
-  Future<void> sendMessage(String conversationId, String body, {String? operationKey}) =>
-      _api.post(
-        '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/messages',
-        {'body': body},
-        operationKey: operationKey,
-      );
+  Future<void> sendMessage(
+    String conversationId,
+    String body, {
+    String? operationKey,
+  }) => _api.post(
+    '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/messages',
+    {'body': body},
+    operationKey: operationKey,
+  );
 
-  Future<void> markRead(String conversationId) =>
-      _api.post('/api/admin/conversations/${Uri.encodeComponent(conversationId)}/read', const {});
+  /// Ubicaciones guardadas de los clientes (`GET /api/admin/locations`).
+  ///
+  /// Se usan para compartir una ubicación guardada; la ubicación actual usa
+  /// coordenadas obtenidas con permiso del dispositivo y confirmación.
+  Future<List<Map<String, dynamic>>> locations() async {
+    final data = await _api.get('/api/admin/locations');
+    return listv(data['locations']).map(mapv).toList();
+  }
+
+  /// Comparte una ubicación guardada con un número o conversación.
+  ///
+  /// `mode: 'location'` envía la ubicación NATIVA (el mapa dentro del chat).
+  /// Fuera de la ventana de 24 h el servidor responde 409 con `canUseTemplate`:
+  /// entonces se reintenta con `mode: 'template'` (plantilla aprobada).
+  Future<Map<String, dynamic>> shareLocation({
+    required String locationId,
+    String phone = '',
+    String name = '',
+    String mode = 'location',
+  }) => _api.post(
+    '/api/admin/locations/${Uri.encodeComponent(locationId)}/share',
+    {'phone': phone, 'name': name, 'mode': mode, 'confirmed': true},
+  );
+
+  Future<void> markRead(String conversationId) => _api.post(
+    '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/read',
+    const {},
+  );
 
   /// IA: corrige la ortografía del texto que se está escribiendo.
   ///
@@ -106,6 +165,39 @@ class CrmRepository {
       'text': text,
     });
     return ProofreadingResult.fromJson(mapv(data['suggestion']));
+  }
+
+  /// Estado de la IA de corrección. Solo administración (`settings.manage`).
+  ///
+  /// Devuelve `{enabled, configured, model, dailyLimit, usedToday}`.
+  /// La clave NUNCA viaja de vuelta al teléfono: solo si está guardada o no.
+  Future<Map<String, dynamic>> deepseekStatus() async {
+    final data = await _api.get('/api/admin/settings/deepseek');
+    return mapv(data['deepseek']);
+  }
+
+  /// Guarda la clave y activa o apaga las correcciones.
+  ///
+  /// `apiKey` vacío conserva la clave que ya hubiera; `removeKey` la borra.
+  Future<Map<String, dynamic>> saveDeepseek({
+    required bool enabled,
+    String apiKey = '',
+    int? dailyLimit,
+    bool removeKey = false,
+  }) async {
+    final data = await _api.post('/api/admin/settings/deepseek', {
+      'enabled': enabled,
+      'apiKey': ?(apiKey.trim().isEmpty ? null : apiKey.trim()),
+      'dailyLimit': ?dailyLimit,
+      if (removeKey) 'removeKey': true,
+    });
+    return mapv(data['deepseek']);
+  }
+
+  /// Prueba la conexión con el proveedor. No corrige ni envía nada.
+  Future<bool> testDeepseek() async {
+    final data = await _api.post('/api/admin/settings/deepseek/test', const {});
+    return data['connected'] == true;
   }
 
   /// IA: propone una respuesta para el hilo (tampoco la envía).
@@ -139,12 +231,11 @@ class CrmRepository {
     required String conversationId,
     required String action,
     String message = '',
-  }) =>
-      _api.post('/api/admin/assistant/query', {
-        'conversationId': conversationId,
-        'action': action,
-        'message': message,
-      });
+  }) => _api.post('/api/admin/assistant/query', {
+    'conversationId': conversationId,
+    'action': action,
+    'message': message,
+  });
 
   /// Confirma o descarta una operación preparada por el asistente.
   /// El servidor vuelve a comprobar permiso y estado del recurso.
@@ -154,7 +245,8 @@ class CrmRepository {
     String? fingerprint,
   }) {
     final body = <String, dynamic>{};
-    if (fingerprint != null && fingerprint.isNotEmpty) body['fingerprint'] = fingerprint;
+    if (fingerprint != null && fingerprint.isNotEmpty)
+      body['fingerprint'] = fingerprint;
     return _api.post(
       '/api/admin/assistant/actions/${Uri.encodeComponent(proposalId)}/${confirm ? 'confirm' : 'cancel'}',
       body,
@@ -179,28 +271,38 @@ class CrmRepository {
   }
 
   /// Archiva (sale de la bandeja) o desarchiva una conversación.
-  Future<void> archiveConversation(String conversationId, bool archived) =>
-      _api.post(
-        '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/${archived ? 'archive' : 'unarchive'}',
-        const {},
-      );
+  Future<void> archiveConversation(
+    String conversationId,
+    bool archived,
+  ) => _api.post(
+    '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/${archived ? 'archive' : 'unarchive'}',
+    const {},
+  );
 
   /// Acción en lote sobre varias conversaciones.
   /// `mark_read` | `resolve` | `archive` | `unarchive`.
-  Future<Map<String, dynamic>> bulkConversations(List<String> ids, String action) =>
-      _api.post('/api/admin/conversations/bulk', {'ids': ids, 'action': action});
+  Future<Map<String, dynamic>> bulkConversations(
+    List<String> ids,
+    String action,
+  ) => _api.post('/api/admin/conversations/bulk', {
+    'ids': ids,
+    'action': action,
+  });
 
-  Future<void> setResolved(String conversationId, bool resolved, {String? operationKey}) =>
-      _api.post(
-        '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/${resolved ? 'resolve' : 'reopen'}',
-        const {},
-        operationKey: operationKey,
-      );
+  Future<void> setResolved(
+    String conversationId,
+    bool resolved, {
+    String? operationKey,
+  }) => _api.post(
+    '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/${resolved ? 'resolve' : 'reopen'}',
+    const {},
+    operationKey: operationKey,
+  );
 
   // ------------------------------------------------------- multimedia del hilo
-  /// Sube una foto, un PDF o una nota de voz a la conversación.
+  /// Sube una foto, un PDF, un video o una nota de voz a la conversación.
   ///
-  /// Contrato real: bytes crudos + `?kind=image|audio|document&caption=&key=`
+  /// Contrato real: bytes crudos + `?kind=image|audio|document|video&caption=&key=`
   /// (`server/media-routes.mjs`). El servidor decide el tipo por el contenido.
   Future<Map<String, dynamic>> sendMedia(
     String conversationId, {
@@ -209,22 +311,23 @@ class CrmRepository {
     String? filename,
     String? caption,
     String? operationKey,
-  }) =>
-      _api.postBytes(
-        '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/media',
-        bytes,
-        contentType: _contentTypeFor(filename, kind),
-        filename: filename,
-        query: {'kind': kind, 'caption': ?caption, 'key': ?operationKey},
-        operationKey: operationKey,
-      );
+  }) => _api.postBytes(
+    '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/media',
+    bytes,
+    contentType: _contentTypeFor(filename, kind),
+    filename: filename,
+    query: {'kind': kind, 'caption': ?caption, 'key': ?operationKey},
+    operationKey: operationKey,
+  );
 
   static String _contentTypeFor(String? filename, String kind) {
     final name = (filename ?? '').toLowerCase();
     if (name.endsWith('.pdf')) return 'application/pdf';
     if (name.endsWith('.png')) return 'image/png';
     if (name.endsWith('.webp')) return 'image/webp';
-    if (name.endsWith('.m4a') || name.endsWith('.mp4')) return 'audio/mp4';
+    if (name.endsWith('.mp4')) return 'video/mp4';
+    if (name.endsWith('.3gp')) return 'video/3gpp';
+    if (name.endsWith('.m4a')) return 'audio/mp4';
     if (name.endsWith('.ogg') || name.endsWith('.opus')) return 'audio/ogg';
     if (name.endsWith('.mp3')) return 'audio/mpeg';
     if (name.endsWith('.aac')) return 'audio/aac';
@@ -232,14 +335,17 @@ class CrmRepository {
     if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'image/jpeg';
     return switch (kind) {
       'audio' => 'audio/mp4',
+      'video' => 'video/mp4',
       'document' => 'application/pdf',
       _ => 'image/jpeg',
     };
   }
 
   /// Bytes de un adjunto del hilo (necesita sesión: nunca hay URL pública).
-  Future<ApiFile> mediaBytes(String mediaId) =>
-      _api.getFile('/api/admin/media/${Uri.encodeComponent(mediaId)}', fallbackName: 'adjunto');
+  Future<ApiFile> mediaBytes(String mediaId) => _api.getFile(
+    '/api/admin/media/${Uri.encodeComponent(mediaId)}',
+    fallbackName: 'adjunto',
+  );
 
   /// CONCILIACIÓN de un envío de archivo cuyo resultado quedó en duda.
   ///
@@ -255,9 +361,13 @@ class CrmRepository {
   }) {
     final query = <String>[
       'outcome=${Uri.encodeQueryComponent(outcome)}',
-      if ((waMessageId ?? '').isNotEmpty) 'wa_message_id=${Uri.encodeQueryComponent(waMessageId!)}',
+      if ((waMessageId ?? '').isNotEmpty)
+        'wa_message_id=${Uri.encodeQueryComponent(waMessageId!)}',
     ].join('&');
-    return _api.post('/api/admin/media/retry/${Uri.encodeComponent(mediaId)}?$query', const {});
+    return _api.post(
+      '/api/admin/media/retry/${Uri.encodeComponent(mediaId)}?$query',
+      const {},
+    );
   }
 
   /// Envía una plantilla aprobada (necesario fuera de la ventana de 24 h).
@@ -266,24 +376,44 @@ class CrmRepository {
     String name, {
     String? operationKey,
     Map<String, dynamic>? values,
-  }) =>
-      _api.post(
-        '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/messages',
-        {'template': name, 'templateValues': ?values},
-        operationKey: operationKey,
-      );
+  }) => _api.post(
+    '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/messages',
+    {'template': name, 'templateValues': ?values},
+    operationKey: operationKey,
+  );
 
   /// Envía una ubicación guardada del negocio a la conversación.
   Future<Map<String, dynamic>> sendLocation(
     String conversationId, {
     required String locationId,
     required String operationKey,
-  }) =>
-      _api.post(
-        '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/location',
-        {'locationId': locationId, 'confirmed': true, 'idempotencyKey': operationKey},
-        operationKey: operationKey,
-      );
+  }) => _api.post(
+    '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/location',
+    {
+      'locationId': locationId,
+      'confirmed': true,
+      'idempotencyKey': operationKey,
+    },
+    operationKey: operationKey,
+  );
+
+  /// Comparte las coordenadas actuales con confirmación del operador.
+  Future<Map<String, dynamic>> sendCurrentLocation(
+    String conversationId, {
+    required double latitude,
+    required double longitude,
+    required String operationKey,
+  }) => _api.post(
+    '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/location',
+    {
+      'latitude': latitude,
+      'longitude': longitude,
+      'source': 'browser_geolocation',
+      'confirmed': true,
+      'idempotencyKey': operationKey,
+    },
+    operationKey: operationKey,
+  );
 
   /// Ubicaciones, bancos y catálogos que el negocio comparte en el chat.
   ///
@@ -299,41 +429,64 @@ class CrmRepository {
 
   /// Guarda las ubicaciones, bancos y catálogos que se comparten en el chat.
   /// Es la misma ruta del panel web (`POST /api/admin/settings/chat-sharing`).
-  Future<Map<String, dynamic>> saveChatSharing(Map<String, dynamic> sharing) async {
+  Future<Map<String, dynamic>> saveChatSharing(
+    Map<String, dynamic> sharing,
+  ) async {
     final data = await _api.post('/api/admin/settings/chat-sharing', sharing);
     final guardado = mapv(data['sharing']);
     return guardado.isEmpty ? data : guardado;
   }
 
   /// Plantillas de WhatsApp aprobadas (para escribir fuera de la ventana de 24 h).
-  Future<List<Map<String, dynamic>>> waTemplates({bool onlyApproved = true}) async {
-    final data = await _api.get('/api/admin/wa-templates', query: {'sync': 'stale'});
+  Future<List<Map<String, dynamic>>> waTemplates({
+    bool onlyApproved = true,
+  }) async {
+    final data = await _api.get(
+      '/api/admin/wa-templates',
+      query: {'sync': 'stale'},
+    );
     final rows = listv(data['templates']);
     if (!onlyApproved) return rows;
-    return rows.where((row) => str(row['status'], 'APPROVED').toUpperCase() == 'APPROVED').toList();
+    return rows
+        .where(
+          (row) => str(row['status'], 'APPROVED').toUpperCase() == 'APPROVED',
+        )
+        .toList();
   }
 
   /// Asignación de la conversación: `take` (ponerse al frente), `release` (soltarla)
   /// o `assign` (solo administración).
-  Future<Map<String, dynamic>> assignConversation(String conversationId, {String action = 'take', String? userId}) =>
-      _api.post(
-        '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/$action',
-        {'userId': ?userId},
-      );
+  Future<Map<String, dynamic>> assignConversation(
+    String conversationId, {
+    String action = 'take',
+    String? userId,
+  }) => _api.post(
+    '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/$action',
+    {'userId': ?userId},
+  );
 
   /// Un agente pide que le asignen la conversación (no se la toma solo).
-  Future<Map<String, dynamic>> requestConversationAssignment(String conversationId, {String? note}) =>
-      _api.post(
-        '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/assignment-request',
-        {'note': ?note},
-      );
+  Future<Map<String, dynamic>> requestConversationAssignment(
+    String conversationId, {
+    String? note,
+  }) => _api.post(
+    '/api/admin/conversations/${Uri.encodeComponent(conversationId)}/assignment-request',
+    {'note': ?note},
+  );
 
   /// Agentes y administradores activos, para asignar conversaciones.
   Future<List<Map<String, dynamic>>> assignableUsers() async {
     final rows = await users();
     return rows
         .where((row) => boolv(row['active'], true))
-        .where((row) => const {'ADMIN', 'AGENT', 'OPERADOR', 'SUPERVISOR'}.contains(str(row['role']).toUpperCase()))
+        .where(
+          (row) => const {
+            'ADMIN',
+            'AGENT',
+            'OPERADOR',
+            'SUPERVISOR',
+          }.contains(str(row['role']).toUpperCase()),
+        )
         .toList();
   }
 
@@ -342,7 +495,9 @@ class CrmRepository {
   /// `estado` es `completada`, `en_proceso` o `no_recibida`. No ejecuta nada.
   Future<Map<String, String>> operationStatuses(List<String> keys) async {
     if (keys.isEmpty) return const {};
-    final data = await _api.post('/api/admin/offline-operations/status', {'ids': keys});
+    final data = await _api.post('/api/admin/offline-operations/status', {
+      'ids': keys,
+    });
     final rows = listv(data['estados']);
     return {
       for (final row in rows)
@@ -364,19 +519,26 @@ class CrmRepository {
       _api.get('/api/admin/orders/${Uri.encodeComponent(id)}');
 
   /// Cambio de estado manual (solo ADMIN: `orders.change_status`).
-  Future<Map<String, dynamic>> changeOrderStatus(String id, String status, {String? expectedStatus, String? reason}) =>
-      _api.patch('/api/admin/orders/${Uri.encodeComponent(id)}/status', {
-        'status': status,
-        'expectedStatus': ?expectedStatus,
-        'reason': ?reason,
-      });
+  Future<Map<String, dynamic>> changeOrderStatus(
+    String id,
+    String status, {
+    String? expectedStatus,
+    String? reason,
+  }) => _api.patch('/api/admin/orders/${Uri.encodeComponent(id)}/status', {
+    'status': status,
+    'expectedStatus': ?expectedStatus,
+    'reason': ?reason,
+  });
 
   /// Confirmar: el paso entre «creado» y «en reparto» (no cobra ni entrega).
-  Future<Map<String, dynamic>> confirmOrder(String id, {String? deliveryNote, String? fulfillment}) =>
-      _api.post('/api/admin/orders/${Uri.encodeComponent(id)}/confirm', {
-        'deliveryNote': ?deliveryNote,
-        'fulfillment': ?fulfillment,
-      });
+  Future<Map<String, dynamic>> confirmOrder(
+    String id, {
+    String? deliveryNote,
+    String? fulfillment,
+  }) => _api.post('/api/admin/orders/${Uri.encodeComponent(id)}/confirm', {
+    'deliveryNote': ?deliveryNote,
+    'fulfillment': ?fulfillment,
+  });
 
   /// Finalizar (pasar a entregado) sin necesitar ADMIN.
   Future<Map<String, dynamic>> finishOrder(String id, {String? reason}) =>
@@ -385,15 +547,20 @@ class CrmRepository {
       });
 
   /// Asignar repartidor del equipo (solo ADMIN).
-  Future<Map<String, dynamic>> assignDelivery(String id, {String? deliveryUserId, String? deliveryNote}) =>
-      _api.post('/api/admin/orders/${Uri.encodeComponent(id)}/delivery/assign', {
-        'deliveryUserId': ?deliveryUserId,
-        'deliveryNote': ?deliveryNote,
-      });
+  Future<Map<String, dynamic>> assignDelivery(
+    String id, {
+    String? deliveryUserId,
+    String? deliveryNote,
+  }) => _api.post(
+    '/api/admin/orders/${Uri.encodeComponent(id)}/delivery/assign',
+    {'deliveryUserId': ?deliveryUserId, 'deliveryNote': ?deliveryNote},
+  );
 
   /// Crear un pedido (mismo contrato que usa el POS: líneas, cliente, cobro).
-  Future<Map<String, dynamic>> createOrder(Map<String, dynamic> body, {String? operationKey}) =>
-      _api.post('/api/admin/orders', body, operationKey: operationKey);
+  Future<Map<String, dynamic>> createOrder(
+    Map<String, dynamic> body, {
+    String? operationKey,
+  }) => _api.post('/api/admin/orders', body, operationKey: operationKey);
 
   /// Editar líneas, descuento, envío o notas. El servidor recalcula el total.
   ///
@@ -407,24 +574,27 @@ class CrmRepository {
     String? notes,
     String? deliveryLocationId,
     String? operationKey,
-  }) =>
-      _api.patch('/api/admin/orders/${Uri.encodeComponent(id)}', {
-        'items': ?items,
-        'discount': ?discount,
-        'deliveryFee': ?deliveryFee,
-        'notes': ?notes,
-        if (deliveryLocationId != null) 'deliveryLocation': {'id': deliveryLocationId},
-      }, operationKey: operationKey);
+  }) => _api.patch('/api/admin/orders/${Uri.encodeComponent(id)}', {
+    'items': ?items,
+    'discount': ?discount,
+    'deliveryFee': ?deliveryFee,
+    'notes': ?notes,
+    if (deliveryLocationId != null)
+      'deliveryLocation': {'id': deliveryLocationId},
+  }, operationKey: operationKey);
 
   /// Cancelar una VENTA ENTREGADA (`sales.cancel`): restaura inventario, anula el
   /// pago y deja el motivo en el historial. Para pedidos no entregados se cambia
   /// el estado a `cancelado` con [changeOrderStatus].
-  Future<Map<String, dynamic>> cancelDeliveredSale(String id, {required String reason, String? operationKey}) =>
-      _api.post(
-        '/api/admin/orders/${Uri.encodeComponent(id)}/cancel',
-        {'reason': reason},
-        operationKey: operationKey,
-      );
+  Future<Map<String, dynamic>> cancelDeliveredSale(
+    String id, {
+    required String reason,
+    String? operationKey,
+  }) => _api.post(
+    '/api/admin/orders/${Uri.encodeComponent(id)}/cancel',
+    {'reason': reason},
+    operationKey: operationKey,
+  );
 
   /// Borrar un pedido cronológico: el servidor lo niega (409) si ya tiene
   /// historial comercial; en ese caso hay que cancelar.
@@ -437,44 +607,55 @@ class CrmRepository {
     String id, {
     required String contactPhone,
     bool autoSend = false,
-  }) =>
-      _api.post('/api/admin/orders/${Uri.encodeComponent(id)}/courier/assign', {
-        'contactPhone': contactPhone,
-        'autoSend': autoSend,
-      });
+  }) => _api.post(
+    '/api/admin/orders/${Uri.encodeComponent(id)}/courier/assign',
+    {'contactPhone': contactPhone, 'autoSend': autoSend},
+  );
 
   /// Reenviar el pedido al repartidor externo ya asignado.
-  Future<Map<String, dynamic>> sendToExternalCourier(String id) =>
-      _api.post('/api/admin/orders/${Uri.encodeComponent(id)}/courier/send', const {});
+  Future<Map<String, dynamic>> sendToExternalCourier(String id) => _api.post(
+    '/api/admin/orders/${Uri.encodeComponent(id)}/courier/send',
+    const {},
+  );
 
   /// Incidencia de entrega. El motivo sale del catálogo del servidor
   /// (`DELIVERY_ISSUE_REASONS`); solo una abierta a la vez.
-  Future<Map<String, dynamic>> reportDeliveryIssue(String id, {required String reason, String? note}) =>
-      _api.post('/api/admin/orders/${Uri.encodeComponent(id)}/delivery/issue', {
-        'reason': reason,
-        'note': ?note,
-      });
+  Future<Map<String, dynamic>> reportDeliveryIssue(
+    String id, {
+    required String reason,
+    String? note,
+  }) => _api.post(
+    '/api/admin/orders/${Uri.encodeComponent(id)}/delivery/issue',
+    {'reason': reason, 'note': ?note},
+  );
 
   /// Resolver la incidencia (solo administración): `resume` o `cancel` + nota.
-  Future<Map<String, dynamic>> resolveDeliveryIssue(String id, {required String action, required String note}) =>
-      _api.post('/api/admin/orders/${Uri.encodeComponent(id)}/delivery/issue/resolve', {
-        'action': action,
-        'note': note,
-      });
+  Future<Map<String, dynamic>> resolveDeliveryIssue(
+    String id, {
+    required String action,
+    required String note,
+  }) => _api.post(
+    '/api/admin/orders/${Uri.encodeComponent(id)}/delivery/issue/resolve',
+    {'action': action, 'note': note},
+  );
 
   /// Confirmación ADMINISTRATIVA de una entrega sin prueba en el teléfono.
   /// Solo `admin.full`: es la firma que sustituye a la evidencia del repartidor.
-  Future<Map<String, dynamic>> confirmDeliveryByAdmin(String id) =>
-      _api.post('/api/admin/orders/${Uri.encodeComponent(id)}/delivery/confirm', const {});
+  Future<Map<String, dynamic>> confirmDeliveryByAdmin(String id) => _api.post(
+    '/api/admin/orders/${Uri.encodeComponent(id)}/delivery/confirm',
+    const {},
+  );
 
   /// Enviar la factura (PDF) por WhatsApp con la plantilla oficial.
   /// El idempotencyKey evita que dos toques manden dos facturas.
-  Future<Map<String, dynamic>> sendInvoiceWhatsapp(String id, {String? operationKey}) =>
-      _api.post(
-        '/api/admin/orders/${Uri.encodeComponent(id)}/invoice-whatsapp',
-        {'idempotencyKey': ?operationKey},
-        operationKey: operationKey,
-      );
+  Future<Map<String, dynamic>> sendInvoiceWhatsapp(
+    String id, {
+    String? operationKey,
+  }) => _api.post(
+    '/api/admin/orders/${Uri.encodeComponent(id)}/invoice-whatsapp',
+    {'idempotencyKey': ?operationKey},
+    operationKey: operationKey,
+  );
 
   /// Vista previa de la factura por WhatsApp: NO envía nada.
   Future<Map<String, dynamic>> invoiceWhatsappPreview(String id) =>
@@ -493,17 +674,20 @@ class CrmRepository {
     double? expectedDue,
     String? note,
     String? evidenceUrl,
-  }) =>
-      _api.post('/api/admin/orders/${Uri.encodeComponent(id)}/payments', {
-        'amount': amount,
-        'method': method,
-        'expectedDue': ?expectedDue,
-        'note': ?note,
-        // Referencia del comprobante (nº de transferencia, captura en Drive…).
-        // El servidor la guarda con el cobro; nunca se sube aquí un archivo.
-        'evidenceUrl': ?evidenceUrl,
-        'idempotencyKey': operationKey,
-      }, operationKey: operationKey);
+  }) => _api.post(
+    '/api/admin/orders/${Uri.encodeComponent(id)}/payments',
+    {
+      'amount': amount,
+      'method': method,
+      'expectedDue': ?expectedDue,
+      'note': ?note,
+      // Referencia del comprobante (nº de transferencia, captura en Drive…).
+      // El servidor la guarda con el cobro; nunca se sube aquí un archivo.
+      'evidenceUrl': ?evidenceUrl,
+      'idempotencyKey': operationKey,
+    },
+    operationKey: operationKey,
+  );
 
   /// Verificar o rechazar un cobro declarado (solo ADMIN). Rechazar no borra:
   /// marca, para no perder la trazabilidad.
@@ -512,11 +696,10 @@ class CrmRepository {
     String paymentId, {
     required String decision,
     String? note,
-  }) =>
-      _api.post(
-        '/api/admin/orders/${Uri.encodeComponent(orderId)}/payments/${Uri.encodeComponent(paymentId)}/verify',
-        {'decision': decision, 'note': ?note},
-      );
+  }) => _api.post(
+    '/api/admin/orders/${Uri.encodeComponent(orderId)}/payments/${Uri.encodeComponent(paymentId)}/verify',
+    {'decision': decision, 'note': ?note},
+  );
 
   /// Rendir el efectivo que lleva el repartidor en ESTE pedido (solo ADMIN).
   /// No es un cobro: el cliente ya pagó, esto dice dónde está el dinero.
@@ -526,11 +709,15 @@ class CrmRepository {
     required String operationKey,
     double? expectedPending,
     String? note,
-  }) =>
-      _api.post(
-        '/api/admin/orders/${Uri.encodeComponent(orderId)}/payments/handover',
-        {'amount': amount, 'expectedPending': ?expectedPending, 'note': ?note, 'idempotencyKey': operationKey},
-      );
+  }) => _api.post(
+    '/api/admin/orders/${Uri.encodeComponent(orderId)}/payments/handover',
+    {
+      'amount': amount,
+      'expectedPending': ?expectedPending,
+      'note': ?note,
+      'idempotencyKey': operationKey,
+    },
+  );
 
   /// Candidatos para reparto (los mismos que usa el POS del panel).
   Future<List<Map<String, dynamic>>> assignees() async {
@@ -539,8 +726,10 @@ class CrmRepository {
   }
 
   /// Factura en PDF del pedido, descargada con la sesión del panel.
-  Future<ApiFile> orderReceiptFile(String id) =>
-      _api.getFile('/api/admin/orders/${Uri.encodeComponent(id)}/factura', fallbackName: 'factura-$id.pdf');
+  Future<ApiFile> orderReceiptFile(String id) => _api.getFile(
+    '/api/admin/orders/${Uri.encodeComponent(id)}/factura',
+    fallbackName: 'factura-$id.pdf',
+  );
 
   /// Pedidos que no cupieron en el paquete ligero.
   ///
@@ -562,7 +751,15 @@ class CrmRepository {
   /// Contrato: `docs/pedidos-paginacion.md`. `total` es el conteo autoritativo
   /// del conjunto filtrado; `nextCursor` es opaco y estable
   /// (`received_at|id`). Solo ADMIN; el resto recibe 403.
-  Future<({List<Map<String, dynamic>> orders, int total, bool hasMore, String? nextCursor})> ordersPage({
+  Future<
+    ({
+      List<Map<String, dynamic>> orders,
+      int total,
+      bool hasMore,
+      String? nextCursor,
+    })
+  >
+  ordersPage({
     int limit = 100,
     String? cursor,
     String? status,
@@ -570,34 +767,42 @@ class CrmRepository {
     String? from,
     String? to,
   }) async {
-    final data = await _api.get('/api/admin/orders', query: {
-      'limit': '$limit',
-      'cursor': ?cursor,
-      'status': ?status,
-      'q': ?q,
-      'from': ?from,
-      'to': ?to,
-    });
+    final data = await _api.get(
+      '/api/admin/orders',
+      query: {
+        'limit': '$limit',
+        'cursor': ?cursor,
+        'status': ?status,
+        'q': ?q,
+        'from': ?from,
+        'to': ?to,
+      },
+    );
     return (
       orders: listv(data['items']),
       total: intv(data['total']),
       hasMore: data['hasMore'] == true,
-      nextCursor: str(data['nextCursor']).isEmpty ? null : str(data['nextCursor']),
+      nextCursor: str(data['nextCursor']).isEmpty
+          ? null
+          : str(data['nextCursor']),
     );
   }
 
-  Future<({List<Map<String, dynamic>> orders, int total, bool complete})> allOrders() async {
+  Future<({List<Map<String, dynamic>> orders, int total, bool complete})>
+  allOrders() async {
     final data = await _api.get('/api/admin/data');
     // Los pedidos SON los `order_intent` del paquete (`crm_state.dart:78-79`).
     // Filtrarlos al revés devolvía una lista vacía: comprobado contra la UAT con
     // 191 pedidos reales — `light=1` trae 150 con `partial:true` y el paquete
     // completo trae los 191 con `partial:false`.
     final items = listv(data['items']);
-    final orders = items.where((row) => str(row['type']) == 'order_intent').toList(growable: false);
-    final complete = data['partial'] != true && items.length < serverOrderCeiling;
+    final orders = items
+        .where((row) => str(row['type']) == 'order_intent')
+        .toList(growable: false);
+    final complete =
+        data['partial'] != true && items.length < serverOrderCeiling;
     return (orders: orders, total: orders.length, complete: complete);
   }
-
 
   /// Anotar un cobro (versión antigua, mantenida por compatibilidad interna).
   Future<Map<String, dynamic>> registerPaymentLegacy(
@@ -606,14 +811,14 @@ class CrmRepository {
     required String method,
     String? note,
     String? idempotencyKey,
-  }) =>
-      registerPayment(
-        id,
-        amount: amount,
-        method: method,
-        note: note,
-        operationKey: idempotencyKey ?? 'app-${DateTime.now().microsecondsSinceEpoch}',
-      );
+  }) => registerPayment(
+    id,
+    amount: amount,
+    method: method,
+    note: note,
+    operationKey:
+        idempotencyKey ?? 'app-${DateTime.now().microsecondsSinceEpoch}',
+  );
 
   // ---------------------------------------------------------------- POS / ventas
   Future<Map<String, dynamic>> posContext(String customerId) =>
@@ -636,42 +841,55 @@ class CrmRepository {
     int? version,
     String? name,
     String? operationKey,
-  }) =>
-      _api.post(
-        ticketId == null
-            ? '/api/admin/pos/tickets'
-            : '/api/admin/pos/tickets/${Uri.encodeComponent(ticketId)}',
-        {
-          'requestId': requestId,
-          'draft': draft,
-          'name': ?name,
-          'version': ?version,
-        },
-        operationKey: operationKey,
-      );
+  }) => _api.post(
+    ticketId == null
+        ? '/api/admin/pos/tickets'
+        : '/api/admin/pos/tickets/${Uri.encodeComponent(ticketId)}',
+    {
+      'requestId': requestId,
+      'draft': draft,
+      'name': ?name,
+      'version': ?version,
+    },
+    operationKey: operationKey,
+  );
 
   /// Descarta un ticket aparcado (`POST /pos/tickets/:id/discard`).
-  Future<Map<String, dynamic>> discardTicket(String ticketId, {required int version, String? operationKey}) =>
-      _api.post(
-        '/api/admin/pos/tickets/${Uri.encodeComponent(ticketId)}/discard',
-        {'version': version},
-        operationKey: operationKey,
-      );
+  Future<Map<String, dynamic>> discardTicket(
+    String ticketId, {
+    required int version,
+    String? operationKey,
+  }) => _api.post(
+    '/api/admin/pos/tickets/${Uri.encodeComponent(ticketId)}/discard',
+    {'version': version},
+    operationKey: operationKey,
+  );
 
   /// Cobrar/emitir. `body` se construye en `pos_screen.dart` con el contrato del
   /// servidor (`requestId`, `items`, `customerId`, `paymentMethod`, `mode`…).
-  Future<Map<String, dynamic>> posCheckout(Map<String, dynamic> body, {String? operationKey}) =>
-      _api.post('/api/admin/pos/checkout', body, operationKey: operationKey);
+  Future<Map<String, dynamic>> posCheckout(
+    Map<String, dynamic> body, {
+    String? operationKey,
+  }) => _api.post('/api/admin/pos/checkout', body, operationKey: operationKey);
 
-  Future<Map<String, dynamic>> posQuote(Map<String, dynamic> body, {String? operationKey}) =>
-      _api.post('/api/admin/pos/quotes', body, operationKey: operationKey);
+  Future<Map<String, dynamic>> deliveryQuote(Map<String, dynamic> body) =>
+      _api.post('/api/admin/delivery-rules/quote', body);
 
-  Future<ApiFile> quoteFile(String quoteId) =>
-      _api.getFile('/api/admin/pos/quotes/${Uri.encodeComponent(quoteId)}/pdf', fallbackName: 'cotizacion-$quoteId');
+  Future<Map<String, dynamic>> posQuote(
+    Map<String, dynamic> body, {
+    String? operationKey,
+  }) => _api.post('/api/admin/pos/quotes', body, operationKey: operationKey);
+
+  Future<ApiFile> quoteFile(String quoteId) => _api.getFile(
+    '/api/admin/pos/quotes/${Uri.encodeComponent(quoteId)}/pdf',
+    fallbackName: 'cotizacion-$quoteId',
+  );
 
   /// Envía la cotización por WhatsApp con la plantilla oficial (no abre wa.me).
-  Future<Map<String, dynamic>> sendQuoteWhatsapp(String quoteId) =>
-      _api.post('/api/admin/pos/quotes/${Uri.encodeComponent(quoteId)}/send-whatsapp', const {});
+  Future<Map<String, dynamic>> sendQuoteWhatsapp(String quoteId) => _api.post(
+    '/api/admin/pos/quotes/${Uri.encodeComponent(quoteId)}/send-whatsapp',
+    const {},
+  );
 
   // ------------------------------------------------------ catálogo e inventario
   Future<Map<String, dynamic>> catalog() => _api.get('/api/admin/catalog');
@@ -695,17 +913,12 @@ class CrmRepository {
     double? unitCost,
     String? reason,
     required String operationKey,
-  }) =>
-      _api.post(
-        '/api/admin/inventory/restock',
-        {
-          'quantity': quantity,
-          'unitCost': ?unitCost,
-          if (reason != null && reason.isNotEmpty) 'reason': reason,
-          'idempotencyKey': operationKey,
-        },
-        operationKey: operationKey,
-      );
+  }) => _api.post('/api/admin/inventory/restock', {
+    'quantity': quantity,
+    'unitCost': ?unitCost,
+    if (reason != null && reason.isNotEmpty) 'reason': reason,
+    'idempotencyKey': operationKey,
+  }, operationKey: operationKey);
 
   /// Ajuste manual hacia dentro o hacia fuera (`POST /api/admin/inventory/adjust`).
   Future<Map<String, dynamic>> adjustInventory({
@@ -714,18 +927,13 @@ class CrmRepository {
     double? unitCost,
     String? reason,
     required String operationKey,
-  }) =>
-      _api.post(
-        '/api/admin/inventory/adjust',
-        {
-          'direction': incoming ? 'in' : 'out',
-          'quantity': quantity,
-          'unitCost': ?unitCost,
-          if (reason != null && reason.isNotEmpty) 'reason': reason,
-          'idempotencyKey': operationKey,
-        },
-        operationKey: operationKey,
-      );
+  }) => _api.post('/api/admin/inventory/adjust', {
+    'direction': incoming ? 'in' : 'out',
+    'quantity': quantity,
+    'unitCost': ?unitCost,
+    if (reason != null && reason.isNotEmpty) 'reason': reason,
+    'idempotencyKey': operationKey,
+  }, operationKey: operationKey);
 
   /// Recuento físico: deja el stock en la cantidad contada
   /// (`POST /api/admin/inventory/count`). La diferencia la calcula el servidor.
@@ -733,32 +941,27 @@ class CrmRepository {
     required int countedQuantity,
     String? reason,
     required String operationKey,
-  }) =>
-      _api.post(
-        '/api/admin/inventory/count',
-        {
-          'countedQuantity': countedQuantity,
-          if (reason != null && reason.isNotEmpty) 'reason': reason,
-          'idempotencyKey': operationKey,
-        },
-        operationKey: operationKey,
-      );
+  }) => _api.post('/api/admin/inventory/count', {
+    'countedQuantity': countedQuantity,
+    if (reason != null && reason.isNotEmpty) 'reason': reason,
+    'idempotencyKey': operationKey,
+  }, operationKey: operationKey);
 
   /// Costo unitario de la cápsula (`POST /api/admin/inventory/cost`).
   Future<Map<String, dynamic>> updateInventoryCost({
     required double unitCost,
     required String operationKey,
-  }) =>
-      _api.post(
-        '/api/admin/inventory/cost',
-        {'unitCost': unitCost, 'idempotencyKey': operationKey},
-        operationKey: operationKey,
-      );
+  }) => _api.post('/api/admin/inventory/cost', {
+    'unitCost': unitCost,
+    'idempotencyKey': operationKey,
+  }, operationKey: operationKey);
 
   /// Empresas asignadas a un usuario (`GET /api/admin/users/:id/companies`).
   /// Devuelve `{company_id, active}` por concesión.
   Future<List<Map<String, dynamic>>> userCompanyGrants(String userId) async {
-    final data = await _api.get('/api/admin/users/${Uri.encodeComponent(userId)}/companies');
+    final data = await _api.get(
+      '/api/admin/users/${Uri.encodeComponent(userId)}/companies',
+    );
     return listv(data['companies']);
   }
 
@@ -769,11 +972,10 @@ class CrmRepository {
     String userId, {
     required String companyId,
     required bool active,
-  }) =>
-      _api.post('/api/admin/users/${Uri.encodeComponent(userId)}/companies', {
-        'companyId': companyId,
-        'active': active,
-      });
+  }) => _api.post('/api/admin/users/${Uri.encodeComponent(userId)}/companies', {
+    'companyId': companyId,
+    'active': active,
+  });
 
   /// Catálogo de empresas logísticas (`GET /api/admin/logistics/companies`).
   Future<List<Map<String, dynamic>>> logisticsCompanies() async {
@@ -782,31 +984,38 @@ class CrmRepository {
   }
 
   /// Expediente de una solicitud: documentos, requeridos y qué falta.
-  Future<Map<String, dynamic>> courierDocuments(String applicationId) =>
-      _api.get('/api/admin/courier-applications/${Uri.encodeComponent(applicationId)}/documents');
+  Future<Map<String, dynamic>> courierDocuments(
+    String applicationId,
+  ) => _api.get(
+    '/api/admin/courier-applications/${Uri.encodeComponent(applicationId)}/documents',
+  );
 
   Future<Map<String, dynamic>> reviewCourierApplication(
     String applicationId, {
     required String decision,
     required String companyId,
     String? note,
-  }) =>
-      _api.post('/api/admin/courier-applications/${Uri.encodeComponent(applicationId)}/review', {
-        'decision': decision,
-        'companyId': companyId,
-        'note': ?note,
-      });
+  }) => _api.post(
+    '/api/admin/courier-applications/${Uri.encodeComponent(applicationId)}/review',
+    {'decision': decision, 'companyId': companyId, 'note': ?note},
+  );
 
-  Future<Map<String, dynamic>> reviewCourierDocument(String documentId, {required String decision, String? note}) =>
-      _api.post('/api/admin/courier-documents/${Uri.encodeComponent(documentId)}/review', {
-        'decision': decision,
-        'note': ?note,
-      });
+  Future<Map<String, dynamic>> reviewCourierDocument(
+    String documentId, {
+    required String decision,
+    String? note,
+  }) => _api.post(
+    '/api/admin/courier-documents/${Uri.encodeComponent(documentId)}/review',
+    {'decision': decision, 'note': ?note},
+  );
 
-  Future<ApiFile> courierDocumentFile(String documentId) =>
-      _api.getFile('/api/admin/courier-documents/${Uri.encodeComponent(documentId)}/file', fallbackName: 'documento-$documentId');
+  Future<ApiFile> courierDocumentFile(String documentId) => _api.getFile(
+    '/api/admin/courier-documents/${Uri.encodeComponent(documentId)}/file',
+    fallbackName: 'documento-$documentId',
+  );
 
-  Future<Map<String, dynamic>> reconciliation() => _api.get('/api/admin/inventory/reconcile');
+  Future<Map<String, dynamic>> reconciliation() =>
+      _api.get('/api/admin/inventory/reconcile');
 
   // ------------------------------------------------------------------ métricas
   Future<Map<String, dynamic>> metrics(String period) =>
@@ -836,6 +1045,57 @@ class CrmRepository {
     return listv(data['suppliers'] ?? data['items']);
   }
 
+  Future<Map<String, dynamic>> saveSupplier(
+    Map<String, dynamic> data, {
+    String? id,
+  }) => id == null
+      ? _api.post('/api/admin/suppliers', data)
+      : _api.patch('/api/admin/suppliers/${Uri.encodeComponent(id)}', data);
+
+  Future<List<Map<String, dynamic>>> productSuppliers() async {
+    final data = await _api.get('/api/admin/product-suppliers');
+    return listv(data['links']);
+  }
+
+  Future<List<Map<String, dynamic>>> pickupStoreProducts() async {
+    final data = await _api.get('/api/admin/store/products');
+    return listv(data['products']);
+  }
+
+  Future<Map<String, dynamic>> saveProductSupplier(
+    String productId,
+    Map<String, dynamic> data,
+  ) => _api.post(
+    '/api/admin/products/${Uri.encodeComponent(productId)}/suppliers',
+    data,
+  );
+
+  Future<Map<String, dynamic>> removeProductSupplier(
+    String productId,
+    String supplierId,
+  ) => _api.delete(
+    '/api/admin/products/${Uri.encodeComponent(productId)}/suppliers/${Uri.encodeComponent(supplierId)}',
+  );
+
+  Future<Map<String, dynamic>> courierEarnings(String companyId) =>
+      _api.get('/api/admin/courier-earnings', query: {'companyId': companyId});
+
+  Future<Map<String, dynamic>> courierPayouts(String companyId) =>
+      _api.get('/api/admin/courier-payouts', query: {'companyId': companyId});
+
+  Future<Map<String, dynamic>> initiateCourierPayout(
+    Map<String, dynamic> data,
+  ) => _api.post('/api/admin/courier-payouts', data);
+
+  Future<Map<String, dynamic>> finishCourierPayout(
+    String payoutId,
+    String action,
+    Map<String, dynamic> data,
+  ) => _api.post(
+    '/api/admin/courier-payouts/${Uri.encodeComponent(payoutId)}/$action',
+    data,
+  );
+
   // ---------------------------------------------------------------- entregas
   Future<List<DeliverySession>> deliveryTracking() async {
     final data = await _api.get('/api/admin/delivery-tracking');
@@ -845,25 +1105,37 @@ class CrmRepository {
   /// Última posición de cada mensajero de la app FULLTECH DELIVERY.
   /// Requiere `admin.full` o `delivery.manage`; el servidor calcula el estado de
   /// señal (`live`/`delayed`/`no_signal`) y devuelve `server_time`.
-  Future<List<CourierPosition>> courierPositions({String companyId = 'phytoemagry'}) async {
-    final data = await _api.get('/api/admin/delivery-courier-positions', query: {'companyId': companyId});
+  Future<List<CourierPosition>> courierPositions({
+    String companyId = 'phytoemagry',
+  }) async {
+    final data = await _api.get(
+      '/api/admin/delivery-courier-positions',
+      query: {'companyId': companyId},
+    );
     return listv(data['positions']).map(CourierPosition.fromJson).toList();
   }
 
-  Future<Map<String, dynamic>> deliveryCash() => _api.get('/api/admin/delivery-cash');
+  Future<Map<String, dynamic>> deliveryCash() =>
+      _api.get('/api/admin/delivery-cash');
 
   /// Libro append-only de movimientos de custodia (solo lectura).
-  Future<List<Map<String, dynamic>>> deliveryCashMovements({String? courierId, String? companyId}) async {
-    final data = await _api.get('/api/admin/delivery-cash/movements', query: {
-      'courierId': ?courierId,
-      'companyId': ?companyId,
-    });
+  Future<List<Map<String, dynamic>>> deliveryCashMovements({
+    String? courierId,
+    String? companyId,
+  }) async {
+    final data = await _api.get(
+      '/api/admin/delivery-cash/movements',
+      query: {'courierId': ?courierId, 'companyId': ?companyId},
+    );
     return listv(data['movements']);
   }
 
   /// Incidencias de conciliación de una empresa (solo lectura: no corrige nada).
   Future<Map<String, dynamic>> deliveryCashIncidents({String? companyId}) =>
-      _api.get('/api/admin/delivery-cash/incidents', query: {'companyId': ?companyId});
+      _api.get(
+        '/api/admin/delivery-cash/incidents',
+        query: {'companyId': ?companyId},
+      );
 
   /// Conciliación completa por empresa + movimientos sin resolver.
   Future<Map<String, dynamic>> deliveryCashReconciliation() =>
@@ -882,13 +1154,12 @@ class CrmRepository {
     required String justification,
     String? evidence,
     String? companyId,
-  }) =>
-      _api.post('/api/admin/delivery-cash/resolutions', {
-        'movementId': movementId,
-        'justification': justification,
-        'evidence': ?evidence,
-        'companyId': ?companyId,
-      });
+  }) => _api.post('/api/admin/delivery-cash/resolutions', {
+    'movementId': movementId,
+    'justification': justification,
+    'evidence': ?evidence,
+    'companyId': ?companyId,
+  });
 
   /// Rendición de efectivo por CUENTA de repartidor (solo ADMIN).
   /// Importes en CENTAVOS, como el resto de la custodia del servidor.
@@ -898,14 +1169,13 @@ class CrmRepository {
     String? companyId,
     String? note,
     required String operationKey,
-  }) =>
-      _api.post('/api/admin/delivery-cash/remittance', {
-        'courierAccountId': courierAccountId,
-        'amountCents': amountCents,
-        'companyId': ?companyId,
-        'note': ?note,
-        'idempotencyKey': operationKey,
-      }, operationKey: operationKey);
+  }) => _api.post('/api/admin/delivery-cash/remittance', {
+    'courierAccountId': courierAccountId,
+    'amountCents': amountCents,
+    'companyId': ?companyId,
+    'note': ?note,
+    'idempotencyKey': operationKey,
+  }, operationKey: operationKey);
 
   Future<List<Map<String, dynamic>>> courierApplications() async {
     final data = await _api.get('/api/admin/courier-applications');
@@ -913,7 +1183,8 @@ class CrmRepository {
   }
 
   // -------------------------------------------------------------- operaciones
-  Future<Map<String, dynamic>> opsSummary() => _api.get('/api/admin/ops/summary');
+  Future<Map<String, dynamic>> opsSummary() =>
+      _api.get('/api/admin/ops/summary');
 
   Future<List<Map<String, dynamic>>> opsInbox() async {
     final data = await _api.get('/api/admin/ops/inbox');
@@ -952,18 +1223,17 @@ class CrmRepository {
     String personalPhone = '',
     String fleetPhone = '',
     bool active = true,
-  }) =>
-      _api.post('/api/admin/users', {
-        'username': username,
-        'password': password,
-        'displayName': displayName,
-        'role': role,
-        if (firstName.isNotEmpty) 'firstName': firstName,
-        if (lastName.isNotEmpty) 'lastName': lastName,
-        if (personalPhone.isNotEmpty) 'personalPhone': personalPhone,
-        if (fleetPhone.isNotEmpty) 'fleetPhone': fleetPhone,
-        'active': active,
-      });
+  }) => _api.post('/api/admin/users', {
+    'username': username,
+    'password': password,
+    'displayName': displayName,
+    'role': role,
+    if (firstName.isNotEmpty) 'firstName': firstName,
+    if (lastName.isNotEmpty) 'lastName': lastName,
+    if (personalPhone.isNotEmpty) 'personalPhone': personalPhone,
+    if (fleetPhone.isNotEmpty) 'fleetPhone': fleetPhone,
+    'active': active,
+  });
 
   /// Edita un usuario existente (`PATCH /api/admin/users/:id`).
   ///
@@ -978,15 +1248,16 @@ class CrmRepository {
     String? firstName,
     String? lastName,
     String? personalPhone,
-  }) =>
-      _api.patch('/api/admin/users/${Uri.encodeComponent(id)}', {
-        'displayName': ?displayName,
-        'role': ?role,
-        'active': ?active,
-        'firstName': ?firstName,
-        'lastName': ?lastName,
-        'personalPhone': ?personalPhone,
-      });
+    String? fleetPhone,
+  }) => _api.patch('/api/admin/users/${Uri.encodeComponent(id)}', {
+    'displayName': ?displayName,
+    'role': ?role,
+    'active': ?active,
+    'firstName': ?firstName,
+    'lastName': ?lastName,
+    'personalPhone': ?personalPhone,
+    'fleetPhone': ?fleetPhone,
+  });
 
   /// Cambia la contraseña de quien tiene la sesión.
   ///
@@ -997,15 +1268,139 @@ class CrmRepository {
     required String currentPassword,
     required String newPassword,
     required String confirmPassword,
-  }) =>
-      _api.post('/api/admin/users/me/password', {
-        'currentPassword': currentPassword,
-        'newPassword': newPassword,
-        'confirmPassword': confirmPassword,
-      });
+  }) => _api.post('/api/admin/users/me/password', {
+    'currentPassword': currentPassword,
+    'newPassword': newPassword,
+    'confirmPassword': confirmPassword,
+  });
 
   Future<List<Map<String, dynamic>>> audit() async {
     final data = await _api.get('/api/admin/audit', query: {'limit': '30'});
     return listv(data['events'] ?? data['entries'] ?? data['items']);
   }
+
+  /// Cuentas que pueden entrar en FULLTECH DELIVERY. La asignación usa el
+  /// usuario o contacto vinculado a esta cuenta, nunca un número arbitrario.
+  Future<List<Map<String, dynamic>>> courierAccounts() async {
+    final data = await _api.get('/api/admin/couriers');
+    return listv(data['couriers']);
+  }
+
+  /// Incluye cuentas cuya empresa principal es otra, si tienen una concesión
+  /// activa para PHYTOEMAGRY. Evita ofrecer cuentas que no verían el pedido.
+  Future<List<Map<String, dynamic>>> phytoCourierAccounts() async {
+    final accounts = await courierAccounts();
+    final checks = await Future.wait(
+      accounts.map((account) async {
+        if (str(account['company_id'], 'phytoemagry') == 'phytoemagry')
+          return account;
+        try {
+          final data = await _api.get(
+            '/api/admin/couriers/${Uri.encodeComponent(str(account['id']))}/companies',
+          );
+          final granted = listv(data['companies']).any(
+            (row) =>
+                str(row['company_id']) == 'phytoemagry' &&
+                row['active'] == true,
+          );
+          return granted ? account : null;
+        } on ApiException {
+          return null;
+        }
+      }),
+    );
+    return checks.whereType<Map<String, dynamic>>().toList();
+  }
+
+  /// El servidor guarda el contacto de reparto y autoriza la cuenta en una
+  /// misma operación; el PIN nunca se devuelve al cliente.
+  Future<Map<String, dynamic>> createExternalCourier({
+    required String name,
+    required String phone,
+    required String pin,
+  }) => _api.post('/api/admin/couriers', {
+    'kind': 'EXTERNAL',
+    'displayName': name,
+    'phone': phone,
+    'pin': pin,
+    'companyId': 'phytoemagry',
+    'appAccess': true,
+  });
+
+  /// Vista de supervisión del reparto; no ejecuta acciones ni envía mensajes.
+  Future<Map<String, dynamic>> deliverySupervisor() =>
+      _api.get('/api/admin/delivery-supervisor');
+
+  /// Conversaciones operativas del Supervisor IA: mismo contrato que el PWA.
+  Future<List<Map<String, dynamic>>> deliverySupervisorChats() async {
+    final data = await _api.get('/api/admin/ops/chats');
+    return listv(data['chats']);
+  }
+
+  Future<Map<String, dynamic>> deliverySupervisorChat(String ticketId) =>
+      _api.get('/api/admin/ops/tickets/${Uri.encodeComponent(ticketId)}');
+
+  /// Identidad editable de la sesión, igual que en Mi perfil del PWA.
+  Future<Map<String, dynamic>> profileDetails() =>
+      _api.get('/api/admin/auth/me');
+
+  Future<Map<String, dynamic>> updateOwnProfile({
+    required String displayName,
+    required String firstName,
+    required String lastName,
+    String? personalPhone,
+    String? fleetPhone,
+  }) => _api.patch('/api/admin/users/me', {
+    'displayName': displayName,
+    'firstName': firstName,
+    'lastName': lastName,
+    'personalPhone': ?personalPhone,
+    'fleetPhone': ?fleetPhone,
+  });
+
+  Future<Map<String, dynamic>> saveFollowupSettings(
+    Map<String, bool> enabled,
+  ) => _api.post('/api/admin/settings/followup', {'enabled': enabled});
+
+  /// Las dos políticas económicas se editan por separado. El servidor calcula
+  /// y guarda los importes finales; estas llamadas no cotizan desde Flutter.
+  Future<Map<String, dynamic>> customerDeliveryPolicy(String companyId) =>
+      _api.get(
+        '/api/admin/delivery-rules/customer',
+        query: {'companyId': companyId},
+      );
+
+  Future<Map<String, dynamic>> saveCustomerDeliveryPolicy(
+    String companyId,
+    Map<String, dynamic> policy,
+  ) => _api.post('/api/admin/delivery-rules/customer', {
+    'company_id': companyId,
+    'policy': policy,
+  });
+
+  Future<List<Map<String, dynamic>>> courierCompensationPolicies() async {
+    final data = await _api.get('/api/admin/courier-compensation');
+    return listv(data['policies']);
+  }
+
+  Future<Map<String, dynamic>> saveCourierCompensationPolicy(
+    String companyId,
+    Map<String, dynamic> policy,
+  ) => _api.post('/api/admin/courier-compensation', {
+    'company_id': companyId,
+    'policy': policy,
+  });
+
+  Future<Map<String, dynamic>> storeContact(String orderId) => _api.get(
+    '/api/admin/orders/${Uri.encodeComponent(orderId)}/store-contact',
+  );
+
+  Future<Map<String, dynamic>> sendStoreContact(
+    String orderId, {
+    required String message,
+    required String idempotencyKey,
+  }) => _api.post(
+    '/api/admin/orders/${Uri.encodeComponent(orderId)}/store-contact',
+    {'message': message, 'idempotencyKey': idempotencyKey},
+  );
 }

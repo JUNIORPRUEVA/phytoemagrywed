@@ -293,10 +293,10 @@ class _CrmMenuDrawerState extends State<CrmMenuDrawer> {
           if ((badge ?? '').isNotEmpty)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-              decoration: BoxDecoration(color: const Color(0xFF25D366), borderRadius: BorderRadius.circular(999)),
+              decoration: BoxDecoration(color: const Color(0xFF145BD7), borderRadius: BorderRadius.circular(999)),
               child: Text(
                 badge!,
-                style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF0B1F16)),
+                style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Colors.white),
               ),
             ),
           if (group)
@@ -499,6 +499,7 @@ class CrmRailEntry {
     this.selected = false,
     this.opensMenu = false,
     this.badge,
+    this.icon,
   });
 
   final String asset;
@@ -509,6 +510,9 @@ class CrmRailEntry {
   /// Al pulsar se abre el menú lateral (es un grupo, no un destino suelto).
   final bool opensMenu;
   final String? badge;
+
+  /// Glifo Material cuando no hay PNG del panel para ese módulo.
+  final IconData? icon;
 }
 
 /// Rail estrecho y permanente con TODOS los iconos del menú.
@@ -517,13 +521,21 @@ class CrmRailEntry {
 /// a cualquier módulo con un clic. Los iconos que corresponden a un grupo abren
 /// el menú lateral para elegir la opción concreta.
 class CrmIconRail extends StatelessWidget {
-  const CrmIconRail({super.key, required this.entries, this.bottom = const []});
+  const CrmIconRail({
+    super.key,
+    required this.entries,
+    this.bottom = const [],
+    this.avatar,
+  });
 
   /// Módulos y grupos (parte de arriba).
   final List<CrmRailEntry> entries;
 
   /// Configuración, Compartir y Mi perfil: van abajo, separados.
   final List<CrmRailEntry> bottom;
+
+  /// Foto (o iniciales) del usuario, al pie del todo.
+  final Widget? avatar;
 
   static const double width = CrmShellMetrics.railWidth;
 
@@ -557,7 +569,74 @@ class CrmIconRail extends StatelessWidget {
               ),
             ),
           ],
+          if (avatar != null) ...[
+            Divider(height: 1, thickness: 1, color: c.line),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Center(child: avatar),
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+/// Foto del usuario en un círculo, al pie del rail.
+///
+/// Si el servidor manda `photo_url` se pinta la foto; si no, las iniciales
+/// sobre el azul suave de marca. Nunca queda un hueco vacío.
+class CrmRailAvatar extends StatelessWidget {
+  const CrmRailAvatar({super.key, required this.initials, this.photoUrl = '', this.onTap});
+
+  final String initials;
+  final String photoUrl;
+  final VoidCallback? onTap;
+
+  static const double size = 34;
+
+  TextStyle get _initialsStyle => const TextStyle(
+        fontSize: 12.5,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 0.2,
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final c = _Palette.of(context);
+    final fallback = Text(
+      initials,
+      style: _initialsStyle.copyWith(color: c.primary),
+    );
+    return Tooltip(
+      message: 'Mi perfil',
+      waitDuration: const Duration(milliseconds: 400),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: onTap,
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            width: size,
+            height: size,
+            alignment: Alignment.center,
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: c.activeFill,
+              border: Border.all(color: c.primary.withValues(alpha: 0.35), width: 1.5),
+            ),
+            child: photoUrl.isEmpty
+                ? fallback
+                : Image.network(
+                    photoUrl,
+                    width: size,
+                    height: size,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stack) => fallback,
+                  ),
+          ),
+        ),
       ),
     );
   }
@@ -594,11 +673,11 @@ class _RailTileState extends State<_RailTile> {
           onTap: entry.onTap,
           behavior: HitTestBehavior.opaque,
           child: Container(
-            height: 42,
+            height: 46,
             margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
             decoration: BoxDecoration(
               color: active ? c.activeFill : (_hovered ? c.hover : Colors.transparent),
-              borderRadius: BorderRadius.circular(9),
+              borderRadius: BorderRadius.circular(11),
             ),
             child: Stack(
               alignment: Alignment.center,
@@ -606,8 +685,8 @@ class _RailTileState extends State<_RailTile> {
                 if (active)
                   Positioned(
                     left: 0,
-                    top: 9,
-                    bottom: 9,
+                    top: 10,
+                    bottom: 10,
                     child: Container(
                       width: 2.5,
                       decoration: BoxDecoration(
@@ -616,7 +695,9 @@ class _RailTileState extends State<_RailTile> {
                       ),
                     ),
                   ),
-                PwaIcon(entry.asset, size: 18, color: tint, opacity: 1),
+                entry.icon != null
+                    ? Icon(entry.icon, size: 22, color: tint)
+                    : PwaIcon(entry.asset, size: 22, color: tint, opacity: 1),
                 if ((entry.badge ?? '').isNotEmpty)
                   Positioned(
                     right: 6,
@@ -624,7 +705,7 @@ class _RailTileState extends State<_RailTile> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF25D366),
+                        color: const Color(0xFF145BD7),
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
@@ -632,7 +713,7 @@ class _RailTileState extends State<_RailTile> {
                         style: const TextStyle(
                           fontSize: 8.5,
                           fontWeight: FontWeight.w800,
-                          color: Color(0xFF0B1F16),
+                          color: Colors.white,
                         ),
                       ),
                     ),
@@ -800,7 +881,7 @@ class _BellButtonState extends State<_BellButton> {
                       width: 7,
                       height: 7,
                       decoration: BoxDecoration(
-                        color: const Color(0xFF25D366),
+                        color: const Color(0xFF145BD7),
                         shape: BoxShape.circle,
                         border: Border.all(color: c.background, width: 1.5),
                       ),

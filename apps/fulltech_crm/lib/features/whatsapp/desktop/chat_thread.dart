@@ -15,10 +15,18 @@ class ChatThread extends StatefulWidget {
     required this.messages,
     required this.queued,
     this.search = '',
+    this.customerPhone = '',
+    this.followRevision = 0,
   });
 
   final List<ChatMessage> messages;
   final List<String> queued;
+
+  /// Teléfono del cliente del hilo (para compartir su ubicación por la API).
+  final String customerPhone;
+
+  /// Cambia cuando el operador envía: vuelve al mensaje más reciente.
+  final int followRevision;
 
   /// Filtro local del encabezado (vacío = todo el historial).
   final String search;
@@ -29,18 +37,58 @@ class ChatThread extends StatefulWidget {
 
 class _ChatThreadState extends State<ChatThread> {
   final _controller = ScrollController();
+  bool _followLatest = true;
+  final Set<String> _seenMessages = {};
+  final Set<String> _newMessages = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_trackScroll);
+    _seenMessages.addAll(widget.messages.map((message) => message.id));
+  }
+
+  void _trackScroll() {
+    if (!_controller.hasClients) return;
+    _followLatest = _controller.offset <= 100;
+  }
 
   @override
   void didUpdateWidget(covariant ChatThread oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.messages.length != widget.messages.length || oldWidget.queued.length != widget.queued.length) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToBottom());
+    _newMessages
+      ..clear()
+      ..addAll(
+        widget.messages
+            .where((message) => !_seenMessages.contains(message.id))
+            .map((message) => message.id),
+      );
+    _seenMessages.addAll(_newMessages);
+    if (oldWidget.followRevision != widget.followRevision) {
+      _followLatest = true;
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _showLatest(animated: true),
+      );
+    } else if ((oldWidget.messages.length != widget.messages.length ||
+            oldWidget.queued.length != widget.queued.length) &&
+        _followLatest) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _showLatest(animated: true),
+      );
     }
   }
 
-  void _jumpToBottom() {
-    if (!_controller.hasClients) return;
-    _controller.jumpTo(_controller.position.maxScrollExtent);
+  void _showLatest({bool animated = false}) {
+    if (!mounted || !_controller.hasClients) return;
+    if (animated) {
+      _controller.animateTo(
+        0,
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
+      );
+    } else {
+      _controller.jumpTo(0);
+    }
   }
 
   @override
@@ -52,7 +100,9 @@ class _ChatThreadState extends State<ChatThread> {
   List<ChatMessage> get _visible {
     final query = widget.search.trim().toLowerCase();
     if (query.isEmpty) return widget.messages;
-    return widget.messages.where((m) => m.body.toLowerCase().contains(query)).toList();
+    return widget.messages
+        .where((m) => m.body.toLowerCase().contains(query))
+        .toList();
   }
 
   @override
@@ -61,28 +111,56 @@ class _ChatThreadState extends State<ChatThread> {
     return ChatDoodleBackground(
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final maxBubbleWidth = constraints.maxWidth * ChatDesktopMetrics.maxBubbleWidthFactor;
+          final maxBubbleWidth =
+              constraints.maxWidth * ChatDesktopMetrics.maxBubbleWidthFactor;
           if (messages.isEmpty && widget.queued.isEmpty) {
             return const _EmptyThread();
           }
           final items = <Widget>[];
+          final indices = <Key, int>{};
+          void add(Key key, Widget child) {
+            indices[key] = items.length;
+            items.add(KeyedSubtree(key: key, child: child));
+          }
+
           String? currentDay;
           for (final message in messages) {
             final day = _dayLabel(message.at);
             if (day != currentDay) {
               currentDay = day;
-              items.add(ChatDateDivider(label: day));
+              add(ValueKey('date:$day'), ChatDateDivider(label: day));
             }
-            items.add(MessageBubble(message: message, maxWidth: maxBubbleWidth));
+            add(
+              ValueKey('message:${message.id}'),
+              _AnimatedMessage(
+                animate: _newMessages.contains(message.id),
+                child: MessageBubble(
+                  message: message,
+                  maxWidth: maxBubbleWidth,
+                  phone: widget.customerPhone,
+                ),
+              ),
+            );
           }
-          for (final body in widget.queued) {
-            items.add(QueuedMessageBubble(body: body, maxWidth: maxBubbleWidth));
+          for (var index = 0; index < widget.queued.length; index++) {
+            add(
+              ValueKey('queued:$index'),
+              QueuedMessageBubble(
+                body: widget.queued[index],
+                maxWidth: maxBubbleWidth,
+              ),
+            );
           }
           return ListView.builder(
             controller: _controller,
+            reverse: true,
             padding: const EdgeInsets.fromLTRB(18, 12, 18, 16),
             itemCount: items.length,
-            itemBuilder: (context, index) => items[index],
+            findChildIndexCallback: (key) {
+              final index = indices[key];
+              return index == null ? null : items.length - 1 - index;
+            },
+            itemBuilder: (context, index) => items[items.length - 1 - index],
           );
         },
       ),
@@ -105,6 +183,28 @@ class _ChatThreadState extends State<ChatThread> {
   }
 }
 
+class _AnimatedMessage extends StatelessWidget {
+  const _AnimatedMessage({required this.animate, required this.child});
+
+  final bool animate;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => TweenAnimationBuilder<double>(
+    tween: Tween(begin: animate ? 0 : 1, end: 1),
+    duration: const Duration(milliseconds: 230),
+    curve: Curves.easeOutCubic,
+    builder: (context, value, child) => Opacity(
+      opacity: value,
+      child: Transform.translate(
+        offset: Offset(0, (1 - value) * 10),
+        child: child,
+      ),
+    ),
+    child: child,
+  );
+}
+
 class _EmptyThread extends StatelessWidget {
   const _EmptyThread();
 
@@ -116,7 +216,11 @@ class _EmptyThread extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.chat_bubble_outline_rounded, size: 36, color: c.textSecondary),
+          Icon(
+            Icons.chat_bubble_outline_rounded,
+            size: 36,
+            color: c.textSecondary,
+          ),
           const SizedBox(height: 10),
           Text(
             'Esta conversación todavía no tiene mensajes',

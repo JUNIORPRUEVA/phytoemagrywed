@@ -61,7 +61,7 @@ function clean(value, max = 120) {
   return String(value ?? '').trim().slice(0, max);
 }
 
-export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJson, can, findOrder = null, listOrders = null, notify = null, llm = null, ai = null, aiTools = null }) {
+export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJson, can, findOrder = null, listOrders = null, notify = null, onTicketEvent = null, llm = null, ai = null, aiTools = null }) {
   if (!/^\/api\/admin\/ops(?:\/|$)/.test(route)) return false;
 
   const send = (status, body) => {
@@ -79,7 +79,7 @@ export async function handleOpsRoute({ req, res, route, ctx, actor, json, readJs
    * la lectura de pedidos que usan las herramientas de los agentes. Se inyectan
    * para que `ops/` no importe el servidor principal (y no haya ciclos).
    */
-  const deps = { notify, findOrder };
+  const deps = { notify, findOrder, onTicketEvent };
   const readBody = async () => {
     try {
       const body = await readJson(req);

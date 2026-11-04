@@ -79,7 +79,7 @@ const entregaAmable = {
  */
 const errorAmable = {
   empty_file: 'El archivo está vacío.',
-  unrecognized_type: 'Eso no parece una imagen ni un audio.',
+  unrecognized_type: 'Eso no parece una imagen, audio, video ni PDF válidos.',
   mime_not_allowed: 'Ese tipo de archivo no está permitido.',
   wrong_kind: 'El archivo no es del tipo que se está enviando.',
   too_large: 'El archivo pesa demasiado.',
@@ -137,7 +137,7 @@ export function createMediaRoutes(deps) {
       return json(res, 502, { ok: false, error: 'storage_unavailable' });
     }
 
-    const contentType = media.mime_type && /^(image|audio|application)\//.test(media.mime_type)
+    const contentType = media.mime_type && /^(image|audio|video|application)\//.test(media.mime_type)
       ? media.mime_type
       : 'application/octet-stream';
     res.writeHead(200, {
@@ -242,7 +242,7 @@ export function createMediaRoutes(deps) {
   }
 
   /**
-   * Subida desde el panel para enviar imagen o audio. El navegador manda los
+   * Subida desde el panel para enviar imagen, audio, video o PDF. El cliente manda los
    * BYTES CRUDOS (no multipart) para no tener que analizar partes en el servidor:
    * el tipo real se decide mirando el contenido, no la cabecera.
    */
@@ -321,9 +321,9 @@ export function createMediaRoutes(deps) {
       return json(res, error.status ?? 400, { ok: false, error: error.message });
     }
 
-    /* Tres familias admitidas desde el panel: imagen, audio y documento (PDF). */
+    /* Familias admitidas desde el panel: imagen, audio, video y documento (PDF). */
     const kindParam = url.searchParams.get('kind');
-    const kind = kindParam === 'audio' ? 'audio' : kindParam === 'document' ? 'document' : 'image';
+    const kind = ['audio', 'document', 'video'].includes(kindParam) ? kindParam : 'image';
     const caption = (url.searchParams.get('caption') ?? '').slice(0, 1024) || null;
     const idempotencyKey = (url.searchParams.get('key') ?? '').slice(0, 80) || null;
 

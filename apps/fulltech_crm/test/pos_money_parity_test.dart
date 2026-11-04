@@ -62,7 +62,7 @@ void main() {
       test(name, () {
         final draft = draftFor(testCase);
         expect(draft.subtotalCents, expected['subtotalCents'], reason: 'subtotal de «$name»');
-        expect(draft.deliveryFeePesos, expected['deliveryFeePesos'], reason: 'envío en pesos de «$name»');
+        expect(draft.deliveryFeeCents, testCase['deliveryFeeCents'], reason: 'envío en centavos de «$name»');
         if (expected['discountCents'] != null) {
           expect(draft.discountCents, expected['discountCents'], reason: 'descuento de «$name»');
         }
@@ -70,16 +70,21 @@ void main() {
           final lineDiscount = draft.lines.fold<int>(0, (sum, line) => sum + line.lineDiscountCents);
           expect(lineDiscount, expected['lineDiscountCents'], reason: 'descuento de línea de «$name»');
         }
-        expect(draft.expectedTotalCents, expected['totalCents'], reason: 'total de «$name»');
+        // El panel web redondea el envío a pesos; Flutter conserva los centavos.
+        final exactTotal = (expected['totalCents'] as int) -
+            ((expected['deliveryFeePesos'] as num).round() * 100) +
+            (testCase['deliveryFeeCents'] as int);
+        expect(draft.expectedTotalCents, exactTotal, reason: 'total de «$name»');
       });
     }
   });
 
-  group('contrato del cuerpo enviado al servidor', () {    test('expectedTotal y deliveryFee viajan como enteros', () {
+  group('contrato del cuerpo enviado al servidor', () {    test('expectedTotal va en centavos y deliveryFee conserva los decimales', () {
       for (final testCase in cases) {
         final body = draftFor(testCase).toCheckoutBody(requestId: 'pos_prueba_0000000001');
         expect(body['expectedTotal'], isA<int>(), reason: 'expectedTotal debe ser entero (${testCase['name']})');
-        expect(body['deliveryFee'], isA<int>(), reason: 'deliveryFee debe ser entero (${testCase['name']})');
+        expect(body['deliveryFee'], (testCase['deliveryFeeCents'] as int) / 100,
+            reason: 'deliveryFee debe preservar centavos (${testCase['name']})');
         expect(body['items'], hasLength((testCase['lines'] as List).length));
       }
     });

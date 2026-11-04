@@ -25,6 +25,7 @@ class ChatPalette {
     required this.textSecondary,
     required this.accent,
     required this.onAccent,
+    required this.link,
     required this.rowHover,
     required this.rowSelected,
     required this.doodle,
@@ -72,6 +73,9 @@ class ChatPalette {
   /// `accent` el blanco no alcanza el contraste mínimo.
   final Color onAccent;
 
+  /// Enlaces dentro del texto de un mensaje (azul de WhatsApp Web).
+  final Color link;
+
   /// Fila bajo el cursor.
   final Color rowHover;
 
@@ -95,11 +99,12 @@ class ChatPalette {
     fieldBg: Color(0xFF202425),
     composerBg: Color(0xFF202425),
     bubbleIn: Color(0xFF202425),
-    bubbleOut: Color(0xFF124C3A),
+    bubbleOut: Color(0xFF15375F),
     textPrimary: Color(0xFFF1F3F3),
     textSecondary: Color(0xFF98A2A6),
-    accent: Color(0xFF25D366),
-    onAccent: Color(0xFF0B1F16),
+    accent: Color(0xFF5B9BFF),
+    onAccent: Color(0xFF06182E),
+    link: Color(0xFF53BDEB),
     rowHover: Color(0xFF1C2021),
     rowSelected: Color(0xFF24292A),
     doodle: Color(0xFF191D1E),
@@ -117,11 +122,12 @@ class ChatPalette {
     fieldBg: Color(0xFFF0F2F5),
     composerBg: Color(0xFFFFFFFF),
     bubbleIn: Color(0xFFFFFFFF),
-    bubbleOut: Color(0xFFD9FDD3),
+    bubbleOut: Color(0xFFDDE8FB),
     textPrimary: Color(0xFF111B21),
     textSecondary: Color(0xFF667781),
-    accent: Color(0xFF00A884),
-    onAccent: Color(0xFF0B1F16),
+    accent: Color(0xFF145BD7),
+    onAccent: Color(0xFFFFFFFF),
+    link: Color(0xFF027EB5),
     rowHover: Color(0xFFF5F6F6),
     rowSelected: Color(0xFFEBEDEF),
     doodle: Color(0xFFE4DED2),
@@ -140,27 +146,33 @@ class ChatPalette {
 /// Medidas tomadas de la captura (px lógicos con la ventana a 1920×1080).
 abstract final class ChatDesktopMetrics {
   /// Ancho del rail: la zona `0..57` es #1D1F1F y en `x=58` está la línea.
-  static const double railWidth = 58;
+  static const double railWidth = 54;
 
-  /// Ancho del panel de conversaciones: `x=59..399`, línea en `x=400`.
-  /// Se amplía a 408 px para que quepan asignación y etapa en cada fila.
-  static const double listWidth = 408;
+  /// Ancho del panel de conversaciones.
+  static const double listWidth = 372;
 
   /// Alto del encabezado del hilo (versión fina y compacta).
-  static const double headerHeight = 46;
+  static const double headerHeight = 42;
 
   /// Alto del área de redacción.
-  static const double composerHeight = 104;
+  static const double composerHeight = 82;
 
-  static const double avatarRail = 34;
-  static const double avatarList = 48;
-  static const double avatarHeader = 40;
-  static const double rowHeight = 72;
-  static const double searchHeight = 38;
-  static const double chipHeight = 28;
-  static const double bubbleRadius = 8;
+  static const double avatarRail = 28;
+  static const double avatarList = 38;
+  static const double avatarHeader = 32;
+  static const double rowHeight = 68;
+  static const double searchHeight = 32;
+  static const double chipHeight = 24;
+  static const double bubbleRadius = 7;
   static const double bubbleRadiusTail = 2;
-  static const double maxBubbleWidthFactor = 0.62;
+
+  /// Tope de la burbuja: 40 % del ancho del hilo. Tarjetas estrechas con el
+  /// texto grande (se lee mejor, no más ancho).
+  static const double maxBubbleWidthFactor = 0.40;
+
+  /// Miniaturas dentro del hilo: pequeñas y con la proporción original.
+  static const double mediaMaxWidth = 220;
+  static const double mediaMaxHeight = 260;
 
   /// WhatsApp Desktop en Windows usa la tipografía del sistema.
   static const String fontFamily = 'Segoe UI';
@@ -176,7 +188,7 @@ class ChatText {
 
   TextStyle get title => TextStyle(
     fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 22,
+    fontSize: 16,
     fontWeight: FontWeight.w600,
     color: c.textPrimary,
     height: 1.2,
@@ -184,59 +196,60 @@ class ChatText {
 
   TextStyle get rowName => TextStyle(
     fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 15,
+    fontSize: 12.4,
     fontWeight: FontWeight.w600,
     color: c.textPrimary,
-    height: 1.25,
+    height: 1.22,
   );
 
   TextStyle get rowPreview => TextStyle(
     fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 13,
+    fontSize: 11.2,
     fontWeight: FontWeight.w400,
     color: c.textSecondary,
-    height: 1.25,
+    height: 1.22,
   );
 
   TextStyle get stamp => TextStyle(
     fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: FontWeight.w400,
     color: c.textSecondary,
   );
 
   TextStyle get headerName => TextStyle(
     fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 16,
+    fontSize: 12.6,
     fontWeight: FontWeight.w600,
     color: c.textPrimary,
   );
 
   TextStyle get headerSubtitle => TextStyle(
     fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 12.5,
+    fontSize: 10.6,
     fontWeight: FontWeight.w400,
     color: c.textSecondary,
   );
 
   TextStyle get bubbleBody => TextStyle(
     fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 14,
+    fontSize: 13.6,
     fontWeight: FontWeight.w400,
     color: c.textPrimary,
-    height: 1.35,
+    height: 1.38,
+    letterSpacing: 0.1,
   );
 
   TextStyle get bubbleMeta => TextStyle(
     fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 11,
+    fontSize: 10.6,
     fontWeight: FontWeight.w400,
     color: c.textSecondary,
   );
 
   TextStyle get author => TextStyle(
     fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 12,
+    fontSize: 10.4,
     fontWeight: FontWeight.w600,
     color: c.accent,
   );
@@ -249,8 +262,9 @@ class ChatText {
 
   TextStyle get dateDivider => TextStyle(
     fontFamily: ChatDesktopMetrics.fontFamily,
-    fontSize: 11.5,
-    fontWeight: FontWeight.w500,
+    fontSize: 10,
+    fontWeight: FontWeight.w600,
+    letterSpacing: 0.4,
     color: c.textSecondary,
   );
 }

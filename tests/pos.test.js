@@ -58,6 +58,35 @@ it('guardar pedido lo deja pendiente sin descontar stock',async()=>{
   expect(order).toMatchObject({status:'nuevo',payment_status:'pending',delivery:{address:'Calle 1',fee:50},notes:'Entregar por la tarde'});
   expect((await call('store/products')).data.movements).toHaveLength(0);
 });
+it('conserva la tienda elegida en la línea del pedido y valida el vínculo en servidor',async()=>{
+  const product=(await call('store/products',{kind:'product',product_type:'third_party',track_stock:false,name:'Artículo externo',sku:'EXT-01',price:'100',cost:'50'})).data.product;
+  const store=(await call('suppliers',{company_id:'fulltech',name:'Tienda de prueba',address:'Calle 12',lat:18.62,lng:-68.71,phone:'8095559999'})).data.supplier;
+  expect(store.company_id).toBe('fulltech');
+  expect((await call(`products/${product.id}/suppliers`,{supplier_id:store.id,cost_cents:5000,availability:'available',verified_at:'2026-11-03T12:00:00Z'})).status).toBe(201);
+  const input={requestId:randomUUID(),mode:'order',customerId:customer.id,items:[{variantId:product.id,quantity:1,supplierId:store.id}],expectedTotal:10000,paymentMethod:'CASH'};
+  const saved=await call('pos/checkout',input);
+  expect(saved.status).toBe(201);
+  const order=(await call(`orders/${saved.data.orderId}`)).data.order;
+  expect(order.company_id).toBe('fulltech');
+  expect(order.items[0]).toMatchObject({supplier_id:store.id,supplier_name:'Tienda de prueba'});
+  expect(order.delivery.pickup).toMatchObject({supplier_id:store.id,address:'Calle 12',latitude:18.62,longitude:-68.71});
+  expect(JSON.stringify(order.delivery.pickup)).not.toContain('8095559999');
+  const noRoute=await call(`orders/${saved.data.orderId}/courier/assign`,{});
+  expect(noRoute.data.error).toBe('delivery_quote_required');
+  const noStore=await call('pos/checkout',{...input,requestId:randomUUID(),items:[{variantId:product.id,quantity:1}],acknowledgeOpen:true});
+  expect(noStore.data.error).toBe('pickup_store_required');
+  const wrong=await call('pos/checkout',{...input,requestId:randomUUID(),items:[{variantId:product.id,quantity:1,supplierId:'missing'}],acknowledgeOpen:true});
+  expect(wrong.data.error).toBe('invalid_pickup_store');
+  await call(`products/${product.id}/suppliers`,{supplier_id:store.id,cost_cents:5000,authorized_price_cents:12000});
+  const changed=await call('pos/checkout',{...input,requestId:randomUUID(),acknowledgeOpen:true});
+  expect(changed.data.error).toBe('store_price_requires_review');
+  const pendingStore=(await call('suppliers',{company_id:'fulltech',name:'Tienda sin GPS',address:'Calle 22'})).data.supplier;
+  await call(`products/${product.id}/suppliers`,{supplier_id:pendingStore.id,cost_cents:5000});
+  const pending=await call('pos/checkout',{...input,requestId:randomUUID(),items:[{variantId:product.id,quantity:1,supplierId:pendingStore.id}],acknowledgeOpen:true});
+  expect(pending.status).toBe(201);
+  const assign=await call(`orders/${pending.data.orderId}/courier/assign`,{});
+  expect(assign.data.error).toBe('pickup_location_required');
+});
 it('una cotización solo se convierte una vez, aunque se envíe otra clave',async()=>{
   const quote=await call('pos/quotes',body()),id=quote.data.document.id;
   const input=body({quoteId:id});const first=await call('pos/checkout',input);expect(first.status).toBe(201);
@@ -75,7 +104,9 @@ it('exige cliente y comprueba que el chat le pertenece',async()=>{
   expect((await call('pos/checkout',body({customerId:'missing'}))).status).toBe(422);
   expect((await call('pos/checkout',body({conversationId:'chat-ajeno'}))).status).toBe(422);
   expect((await call('pos/checkout',body({paymentMethod:'CARD'}))).status).toBe(422);
-  expect((await call('pos/checkout',body({deliveryFee:0.5}))).status).toBe(422);
+  const staleTotal=await call('pos/checkout',body({deliveryFee:0.5}));
+  expect(staleTotal.status).toBe(409);
+  expect(staleTotal.data.error).toBe('price_changed');
 });
 it('protege la última unidad, descuenta una sola vez y mantiene el descuento en el comprobante',async()=>{
   const image='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWMI7VgV2rGKAUIBACl+Bh2rITjYAAAAAElFTkSuQmCC';
@@ -129,8 +160,10 @@ it('desde el chat real abre Facturación con el cliente y guarda la cotización 
     expect(w.document.querySelector('#drawer details.drawer__fold').open).toBe(false);
     w.dispatchEvent(new w.CustomEvent('fulltech:main-drawer',{detail:{open:false}}));
     w.document.querySelector('[data-tab="whatsapp"]').click();await until(()=>w.document.querySelector('[data-conv]'),'conversación');
-    w.document.querySelector('[data-conv]').click();await until(()=>w.document.querySelector('#wa-actions')?.disabled===false,'acciones');
-    w.document.querySelector('#wa-actions').click();await until(()=>w.document.querySelector('[data-order-new]'),'crear pedido');
+    w.document.querySelector('[data-conv]').click();
+    await until(()=>w.document.querySelector('#wa-ai-reply')?.disabled===false,'conversación cargada');
+    w.document.querySelector('#wa-edge-right').click();
+    await until(()=>w.document.querySelector('[data-order-new]'),'crear pedido');
     w.document.querySelector('[data-order-new]').click();await until(()=>w.document.body.dataset.tab==='catalogo'&&w.document.querySelector('#pos-client').textContent.includes('Cliente de prueba'),'cliente en POS');
     expect(w.document.querySelector('#sheet').hidden).toBe(true);
     expect(w.document.querySelector('#pos-client').textContent).not.toContain('Venta de mostrador');

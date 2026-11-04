@@ -32,6 +32,17 @@ class FileOpener {
 
   /// Guarda el archivo y lo abre. Devuelve la ruta, o `null` si no se pudo abrir.
   static Future<String?> saveAndOpen(ApiFile file) async {
+    final path = await saveForPreview(file);
+    if (kIsWeb) return path;
+    final result = await OpenFilex.open(path);
+    if (kDebugMode) {
+      debugPrint('[crm] abrir documento: ${result.type}');
+    }
+    return result.type == ResultType.done ? path : null;
+  }
+
+  /// Copia privada temporal para reproducir multimedia dentro del CRM.
+  static Future<String> saveForPreview(ApiFile file) async {
     await purgeOld();
     final directory = await _directory();
     final safeName = file.fileName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
@@ -39,13 +50,7 @@ class FileOpener {
       '${directory.path}${Platform.pathSeparator}$_prefix${DateTime.now().millisecondsSinceEpoch}_$safeName',
     );
     await target.writeAsBytes(file.bytes, flush: true);
-    if (kIsWeb) return target.path;
-    final result = await OpenFilex.open(target.path);
-    if (kDebugMode) {
-      // Solo el resultado: ni rutas con nombres de cliente ni contenido.
-      debugPrint('[crm] abrir documento: ${result.type}');
-    }
-    return result.type == ResultType.done ? target.path : null;
+    return target.path;
   }
 
   /// Borra los archivos que ya no hace falta conservar.

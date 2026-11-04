@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../app/crm_scope.dart';
 import '../../data/crm_repository.dart';
 import '../common/crm_ui.dart';
+import 'pos_toast.dart';
 
 /// «Pedir datos al cliente» con IA — el equivalente nativo de la acción de la
 /// PWA (`public/admin/pos.js` → `pedirDatosAlCliente`).
@@ -33,6 +34,7 @@ class PosOrderMessageDialog extends StatefulWidget {
 
   final String customerName;
   final String customerPhone;
+
   /// Id del cliente en el CRM: es la forma fiable de encontrar su chat.
   final String customerId;
   final List<String> missing;
@@ -55,6 +57,7 @@ class _PosOrderMessageDialogState extends State<PosOrderMessageDialog> {
   bool _cargando = true;
   bool _enviando = false;
   bool _enviado = false;
+
   /// Se fija una sola vez: el reintento reutiliza la misma clave.
   String _clave = '';
 
@@ -64,7 +67,8 @@ class _PosOrderMessageDialogState extends State<PosOrderMessageDialog> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _generar());
   }
 
-  CrmRepository get _repo => widget.repository ?? CrmScope.of(context, listen: false).repository;
+  CrmRepository get _repo =>
+      widget.repository ?? CrmScope.of(context, listen: false).repository;
 
   Future<void> _generar() async {
     setState(() {
@@ -78,7 +82,8 @@ class _PosOrderMessageDialogState extends State<PosOrderMessageDialog> {
         if (!mounted) return;
         setState(() {
           _cargando = false;
-          _error = 'Este cliente no tiene ningún chat abierto. Ábrelo desde WhatsApp y vuelve a intentarlo.';
+          _error =
+              'Este cliente no tiene ningún chat abierto. Ábrelo desde WhatsApp y vuelve a intentarlo.';
         });
         return;
       }
@@ -92,13 +97,16 @@ class _PosOrderMessageDialogState extends State<PosOrderMessageDialog> {
       setState(() {
         _cargando = false;
         _texto = texto.trim();
-        if (_texto.isEmpty) _error = 'La IA no devolvió ningún texto. Escribe el mensaje a mano.';
+        if (_texto.isEmpty) {
+          _error = 'La IA no devolvió ningún texto. Escribe el mensaje a mano.';
+        }
       });
     } catch (error) {
       if (!mounted) return;
       setState(() {
         _cargando = false;
-        _error = 'No se pudo preparar el mensaje. Revisa la conexión e inténtalo otra vez.';
+        _error =
+            'No se pudo preparar el mensaje. Revisa la conexión e inténtalo otra vez.';
       });
       debugPrint('mensaje de pedido: $error');
     }
@@ -120,7 +128,9 @@ class _PosOrderMessageDialogState extends State<PosOrderMessageDialog> {
     if (widget.customerId.isNotEmpty) {
       for (final fila in filas) {
         if (fila is! Map) continue;
-        if ('${fila['customer_id'] ?? ''}' == widget.customerId) return '${fila['id'] ?? ''}';
+        if ('${fila['customer_id'] ?? ''}' == widget.customerId) {
+          return '${fila['id'] ?? ''}';
+        }
       }
     }
     // 2) Por teléfono, comparando por sufijo (el mismo número llega con o sin
@@ -128,11 +138,16 @@ class _PosOrderMessageDialogState extends State<PosOrderMessageDialog> {
     if (digitos.isEmpty) return '';
     for (final fila in filas) {
       if (fila is! Map) continue;
-      final cliente = fila['customer'] is Map ? fila['customer'] as Map : const {};
-      final telefono = '${cliente['phone'] ?? cliente['phone_e164'] ?? fila['phone'] ?? ''}'
-          .replaceAll(RegExp(r'[^0-9]'), '');
+      final cliente = fila['customer'] is Map
+          ? fila['customer'] as Map
+          : const {};
+      final telefono =
+          '${cliente['phone'] ?? cliente['phone_e164'] ?? fila['phone'] ?? ''}'
+              .replaceAll(RegExp(r'[^0-9]'), '');
       if (telefono.isEmpty) continue;
-      final cola = digitos.length > 7 ? digitos.substring(digitos.length - 7) : digitos;
+      final cola = digitos.length > 7
+          ? digitos.substring(digitos.length - 7)
+          : digitos;
       if (telefono.endsWith(cola)) return '${fila['id'] ?? ''}';
     }
     return '';
@@ -141,7 +156,7 @@ class _PosOrderMessageDialogState extends State<PosOrderMessageDialog> {
   Future<void> _copiar() async {
     await Clipboard.setData(ClipboardData(text: _texto));
     if (!mounted) return;
-    crmToast(context, 'Mensaje copiado.');
+    posToast(context, 'Mensaje copiado.');
   }
 
   Future<void> _enviar() async {
@@ -158,7 +173,9 @@ class _PosOrderMessageDialogState extends State<PosOrderMessageDialog> {
       _error = '';
     });
     // La MISMA clave en un reintento: el servidor no duplica el mensaje.
-    _clave = _clave.isEmpty ? 'wa_order_${DateTime.now().microsecondsSinceEpoch}' : _clave;
+    _clave = _clave.isEmpty
+        ? 'wa_order_${DateTime.now().microsecondsSinceEpoch}'
+        : _clave;
     try {
       await _repo.sendMessage(_conversationId, _texto, operationKey: _clave);
       if (!mounted) return;
@@ -171,7 +188,8 @@ class _PosOrderMessageDialogState extends State<PosOrderMessageDialog> {
       if (!mounted) return;
       setState(() {
         _enviando = false;
-        _error = 'No se pudo enviar. El texto se conserva: puedes reintentarlo.';
+        _error =
+            'No se pudo enviar. El texto se conserva: puedes reintentarlo.';
       });
       debugPrint('envío del mensaje de pedido: $error');
     }
@@ -195,14 +213,24 @@ class _PosOrderMessageDialogState extends State<PosOrderMessageDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (widget.missing.isNotEmpty)
-              Text('Falta: ${widget.missing.join(', ')}', style: const TextStyle(fontSize: 12)),
+              Text(
+                'Falta: ${widget.missing.join(', ')}',
+                style: const TextStyle(fontSize: 12),
+              ),
             const SizedBox(height: 10),
             if (_cargando)
               const Row(
                 children: [
-                  SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
                   SizedBox(width: 10),
-                  Text('Preparando el mensaje…', style: TextStyle(fontSize: 13)),
+                  Text(
+                    'Preparando el mensaje…',
+                    style: TextStyle(fontSize: 13),
+                  ),
                 ],
               )
             else if (_texto.isNotEmpty)
@@ -221,7 +249,10 @@ class _PosOrderMessageDialogState extends State<PosOrderMessageDialog> {
             ],
             if (_enviado) ...[
               const SizedBox(height: 10),
-              const Text('Mensaje registrado en el chat.', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              const Text(
+                'Mensaje registrado en el chat.',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
             ],
             const SizedBox(height: 8),
             const Text(
@@ -234,14 +265,20 @@ class _PosOrderMessageDialogState extends State<PosOrderMessageDialog> {
       actions: [
         if (!_cargando && _texto.isNotEmpty) ...[
           TextButton(onPressed: _copiar, child: const Text('Copiar')),
-          TextButton(onPressed: _enviando ? null : _generar, child: const Text('Regenerar')),
+          TextButton(
+            onPressed: _enviando ? null : _generar,
+            child: const Text('Regenerar'),
+          ),
           FilledButton.icon(
             onPressed: _enviando || _enviado ? null : _enviar,
             icon: const Icon(Icons.send_outlined, size: 16),
             label: Text(_enviando ? 'Enviando…' : 'Enviar al cliente'),
           ),
         ],
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cerrar')),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cerrar'),
+        ),
       ],
     );
   }

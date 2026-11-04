@@ -22,7 +22,7 @@ beforeEach(async()=>{
  product=(await api('/api/admin/store/products',{name:'Producto retiro UAT',sku:'PICKUP-UAT',kind:'product',store:'fulltech',price:1000,cost:500,quantity:2,image:IMAGE})).data.product;
  await api(`/api/admin/store/products/${product.id}/publication`,{status:'published'});
  alice=await api('/api/store/account/register',{name:'Ana UAT',phone:'8095550901',password:'Fulfillment-123'},null);bob=await api('/api/store/account/register',{name:'Luis UAT',phone:'8095550902',password:'Fulfillment-123'},null);
- cfg=(await api('/api/admin/store/commerce/config')).data.config;cfg={...cfg,expectedVersion:0,defaultOriginId:'origin_uat',branches:[{id:'branch_uat',name:'Sucursal sintética UAT',active:true}],origins:[{id:'origin_uat',branchId:'branch_uat',city:'Ciudad UAT A',latitude:18.6,longitude:-68.7,active:true,pickup:true,delivery:true}],zones:[],offers:[],banks:[{id:'bank_uat',name:'Banco ficticio',holder:'UAT',account:'NO-REAL',active:true}]};expect((await api('/api/admin/store/commerce/config',cfg,admin,'PUT')).status).toBe(200);
+ cfg=(await api('/api/admin/store/commerce/config')).data.config;cfg={...cfg,expectedVersion:0,policy:{minimumFeeDop:100,firstMeters:1000,firstFeeDop:100,incrementMeters:500,incrementFeeDop:50,maxMeters:15000,active:true},defaultOriginId:'origin_uat',branches:[{id:'branch_uat',name:'Sucursal sintética UAT',active:true}],origins:[{id:'origin_uat',branchId:'branch_uat',city:'Ciudad UAT A',latitude:18.6,longitude:-68.7,active:true,pickup:true,delivery:true}],zones:[],offers:[],banks:[{id:'bank_uat',name:'Banco ficticio',holder:'UAT',account:'NO-REAL',active:true}]};expect((await api('/api/admin/store/commerce/config',cfg,admin,'PUT')).status).toBe(200);
 });
 afterEach(async()=>{await app?.close();rmSync(dir,{recursive:true,force:true});});
 it('atomically reserves branch stock, rejects overselling and releases on cancellation',async()=>{
@@ -78,7 +78,9 @@ it('protects allocated stock from ordinary catalog adjustments and filters branc
  await api(op+'/grants',{userId:user.data.user.id,branchId:'branch_uat',permissions:[]},admin,'PUT');expect((await api(op+`/requests/${r.id}/prepare`,{},staff)).status).toBe(403);
 });
 it('keeps supplier-reported availability separate, requires acceptance and never equates sent with accepted',async()=>{
- const supplier=(await api('/api/admin/suppliers',{name:'Proveedor sintético UAT',phone:'8095550999',active:true})).data.supplier;
+ const supplierResponse=await api('/api/admin/suppliers',{name:'Proveedor sintético UAT',phone:'8095550999',active:true,companyId:'fulltech'});
+ expect(supplierResponse.status,JSON.stringify(supplierResponse.data)).toBe(201);
+ const supplier=supplierResponse.data.supplier;
  cfg.expectedVersion=1;cfg.branches[0].supplierId=supplier.id;expect((await api('/api/admin/store/commerce/config',cfg,admin,'PUT')).status).toBe(200);
  const external=(await api('/api/admin/store/products',{name:'Producto externo UAT',sku:'EXTERNAL-UAT',kind:'product',store:'fulltech',product_type:'third_party',track_stock:false,store_availability:'AVAILABLE_NOW',price:1000,cost:500,quantity:0,image:IMAGE})).data.product;
  expect(external?.id).toBeTruthy();await api(`/api/admin/store/products/${external.id}/publication`,{status:'published'});
@@ -125,7 +127,7 @@ it('prevents overselling across two server instances sharing the isolated SQLite
 });
 it('uses the existing delivery completion engine to atomically consume reserved branch stock',async()=>{
  await count(1);cfg.expectedVersion=1;cfg.zones=[{id:'zone_delivery',name:'Zona sintética entrega',active:true,originIds:['origin_uat'],polygon:[[-68.8,18.5],[-68.5,18.5],[-68.5,18.8],[-68.8,18.8],[-68.8,18.5]],hours:Array.from({length:7},(_,day)=>({day,startMinute:0,endMinute:1440}))}];expect((await api('/api/admin/store/commerce/config',cfg,admin,'PUT')).status).toBe(200);
- const items=[{id:product.id,quantity:1}],input={items,fulfillment:'delivery',destination:{latitude:18.61,longitude:-68.71,accuracy:10},destinationConfirmed:true,address:'Calle de entrega sintética UAT'},q=(await api(account+'/quotes',input,alice.cookie)).data.quote;expect(q.deliveryFeeCents).toBe(110000);
+ const items=[{id:product.id,quantity:1}],input={items,fulfillment:'delivery',destination:{latitude:18.61,longitude:-68.71,accuracy:10},destinationConfirmed:true,address:'Calle de entrega sintética UAT'},q=(await api(account+'/quotes',input,alice.cookie)).data.quote;expect(q.deliveryFeeCents,JSON.stringify(q)).toBe(110000);
  const o=await api('/api/store/orders',{...input,quoteId:q.id,requestKey:'reserved-delivery-001'},alice.cookie);expect(o.status,JSON.stringify(o.data)).toBe(201);const r=(await requests())[0];await ready(r);
  const finish=await api(`/api/admin/orders/${o.data.order.id}/status`,{status:'ENTREGADO',reason:'Entrega sintética UAT sin cobro'},admin,'PATCH');expect(finish.status,JSON.stringify(finish.data)).toBe(200);expect((await api(op+'/stock')).data.stock[0]).toMatchObject({on_hand:0,held:0});expect((await api('/api/admin/store/products')).data.products.find(p=>p.id===product.id).quantity).toBe(1);
 });

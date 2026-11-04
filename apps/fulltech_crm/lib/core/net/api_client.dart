@@ -114,6 +114,16 @@ class ApiClient {
       'text/html' => 'html',
       'image/png' => 'png',
       'image/jpeg' => 'jpg',
+      'image/webp' => 'webp',
+      'audio/ogg' => 'ogg',
+      'audio/opus' => 'opus',
+      'audio/mpeg' => 'mp3',
+      'audio/mp4' => 'm4a',
+      'audio/aac' => 'aac',
+      'audio/wav' => 'wav',
+      'audio/webm' => 'webm',
+      'video/mp4' => 'mp4',
+      'video/3gpp' => '3gp',
       _ => '',
     };
     final hasExtension = rawName.contains('.');

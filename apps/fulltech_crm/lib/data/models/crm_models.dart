@@ -13,11 +13,13 @@ String str(Object? value, [String fallback = '']) {
 
 num numv(Object? value, [num fallback = 0]) {
   if (value is num) return value;
-  if (value is String) return num.tryParse(value.replaceAll(',', '')) ?? fallback;
+  if (value is String)
+    return num.tryParse(value.replaceAll(',', '')) ?? fallback;
   return fallback;
 }
 
-double dub(Object? value, [double fallback = 0]) => numv(value, fallback).toDouble();
+double dub(Object? value, [double fallback = 0]) =>
+    numv(value, fallback).toDouble();
 
 int intv(Object? value, [int fallback = 0]) => numv(value, fallback).toInt();
 
@@ -28,11 +30,13 @@ bool boolv(Object? value, [bool fallback = false]) {
   return fallback;
 }
 
-Map<String, dynamic> mapv(Object? value) =>
-    value is Map ? value.map((key, v) => MapEntry(key.toString(), v)) : <String, dynamic>{};
+Map<String, dynamic> mapv(Object? value) => value is Map
+    ? value.map((key, v) => MapEntry(key.toString(), v))
+    : <String, dynamic>{};
 
-List<Map<String, dynamic>> listv(Object? value) =>
-    value is List ? value.map(mapv).where((row) => row.isNotEmpty).toList() : const [];
+List<Map<String, dynamic>> listv(Object? value) => value is List
+    ? value.map(mapv).where((row) => row.isNotEmpty).toList()
+    : const [];
 
 class CrmUser {
   const CrmUser({
@@ -40,6 +44,7 @@ class CrmUser {
     required this.username,
     required this.displayName,
     required this.role,
+    this.photoUrl = '',
   });
 
   final String id;
@@ -47,30 +52,48 @@ class CrmUser {
   final String displayName;
   final String role;
 
+  /// Foto del usuario si el servidor la expone (`photo_url`). Vacía = iniciales.
+  final String photoUrl;
+
   bool get isAdmin => role.toUpperCase() == 'ADMIN';
 
   String get initials {
     final source = (displayName.isNotEmpty ? displayName : username).trim();
     if (source.isEmpty) return 'FT';
-    final parts = source.split(RegExp(r'\s+')).where((part) => part.isNotEmpty).toList();
+    final parts = source
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .toList();
     if (parts.length == 1) return parts.first.characters2;
     return '${parts.first.characters2}${parts.last.characters2}';
   }
 
   factory CrmUser.fromJson(Map<String, dynamic> json) => CrmUser(
-        id: str(json['id']),
-        username: str(json['username']),
-        displayName: str(json['display_name'], str(json['displayName'], str(json['username']))),
-        role: str(json['role'], 'AGENT').toUpperCase(),
-      );
+    id: str(json['id']),
+    username: str(json['username']),
+    displayName: str(
+      json['display_name'],
+      str(json['displayName'], str(json['username'])),
+    ),
+    role: str(json['role'], 'AGENT').toUpperCase(),
+    photoUrl: str(
+      json['photo_url'],
+      str(json['photoUrl'], str(json['avatar_url'])),
+    ),
+  );
 }
 
 extension _TwoChars on String {
-  String get characters2 => length >= 2 ? substring(0, 2).toUpperCase() : toUpperCase();
+  String get characters2 =>
+      length >= 2 ? substring(0, 2).toUpperCase() : toUpperCase();
 }
 
 class CrmSession {
-  const CrmSession({this.user, this.permissions = const {}, this.legacy = false});
+  const CrmSession({
+    this.user,
+    this.permissions = const {},
+    this.legacy = false,
+  });
 
   final CrmUser? user;
   final Set<String> permissions;
@@ -90,10 +113,11 @@ class CrmSession {
     final user = json['user'];
     return CrmSession(
       user: user is Map ? CrmUser.fromJson(mapv(user)) : null,
-      permissions: (json['permissions'] is List ? json['permissions'] as List : const [])
-          .map((value) => str(value))
-          .where((value) => value.isNotEmpty)
-          .toSet(),
+      permissions:
+          (json['permissions'] is List ? json['permissions'] as List : const [])
+              .map((value) => str(value))
+              .where((value) => value.isNotEmpty)
+              .toSet(),
       legacy: boolv(json['legacy']),
     );
   }
@@ -171,7 +195,10 @@ class Conversation {
       unread: intv(json['unread_count']),
       awaitingReply: boolv(json['awaiting_reply']),
       isResolved: boolv(json['is_resolved'], boolv(json['resolved'])),
-      stage: str(json['customer_stage'], str(json['customerStage'], 'NUEVO')).toUpperCase(),
+      stage: str(
+        json['customer_stage'],
+        str(json['customerStage'], 'NUEVO'),
+      ).toUpperCase(),
       tags: (json['tags'] is List ? json['tags'] as List : const [])
           .map((tag) => tag is Map ? str(mapv(tag)['name']) : str(tag))
           .where((tag) => tag.isNotEmpty)
@@ -186,14 +213,15 @@ class Conversation {
   }
 
   String get preview => switch (lastType) {
-        'image' => 'Foto',
-        'audio' => 'Nota de voz',
-        'video' => 'Vídeo',
-        'document' => 'Documento',
-        'location' => 'Ubicación',
-        'sticker' => 'Sticker',
-        _ => lastBody,
-      };
+    'image' => 'Foto',
+    'audio' => 'Nota de voz',
+    'voice' => 'Nota de voz',
+    'video' => 'Vídeo',
+    'document' => 'Documento',
+    'location' => 'Ubicación',
+    'sticker' => 'Sticker',
+    _ => lastBody,
+  };
 }
 
 class ChatMessage {
@@ -232,19 +260,40 @@ class ChatMessage {
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     final media = mapv(json['media']);
     final location = mapv(json['location']);
+    final body = str(json['body'], str(json['text']));
+    // Mensajes antiguos compartieron un enlace de Maps como texto. Muéstralos
+    // como mapa si el enlace contiene coordenadas válidas.
+    final linked = _mapCoordinates(body);
     return ChatMessage(
       id: str(json['id'], str(json['message_id'])),
       direction: str(json['direction'], 'inbound'),
-      body: str(json['body'], str(json['text'])),
+      body: body,
       type: str(json['type'], 'text'),
       status: str(json['status']),
       at: str(json['created_at'], str(json['at'], str(json['timestamp']))),
       author: str(json['author'], str(json['sent_by'])),
       mediaUrl: str(json['media_url'], str(media['url'], str(json['url']))),
       mediaId: str(media['id'], str(json['media_id'], str(json['mediaId']))),
-      latitude: location['latitude'] == null ? null : dub(location['latitude']),
-      longitude: location['longitude'] == null ? null : dub(location['longitude']),
+      latitude: location['latitude'] == null
+          ? linked?.$1
+          : dub(location['latitude']),
+      longitude: location['longitude'] == null
+          ? linked?.$2
+          : dub(location['longitude']),
     );
+  }
+
+  static (double, double)? _mapCoordinates(String body) {
+    final match = RegExp(
+      r'https?://(?:www\.)?maps\.google\.com/\?q=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)',
+      caseSensitive: false,
+    ).firstMatch(body);
+    if (match == null) return null;
+    final lat = double.tryParse(match.group(1)!);
+    final lng = double.tryParse(match.group(2)!);
+    if (lat == null || lng == null || lat.abs() > 90 || lng.abs() > 180)
+      return null;
+    return (lat, lng);
   }
 }
 
@@ -284,7 +333,10 @@ class Customer {
       name: str(json['name'], str(json['phone_e164'], 'Sin nombre')),
       phone: str(json['phone_e164'], str(json['phone'])),
       email: str(json['email']),
-      stage: str(json['customer_stage'], str(json['customerStage'], str(json['stage'], 'NUEVO'))).toUpperCase(),
+      stage: str(
+        json['customer_stage'],
+        str(json['customerStage'], str(json['stage'], 'NUEVO')),
+      ).toUpperCase(),
       tags: (json['tags'] is List ? json['tags'] as List : const [])
           .map((tag) => tag is Map ? str(mapv(tag)['name']) : str(tag))
           .where((tag) => tag.isNotEmpty)
@@ -340,7 +392,11 @@ class OrderItem {
   final String conversationId;
   final String source;
 
-  bool get isOpen => !const {'entregado', 'cancelado', 'devuelto'}.contains(status.toLowerCase());
+  bool get isOpen => !const {
+    'entregado',
+    'cancelado',
+    'devuelto',
+  }.contains(status.toLowerCase());
 
   factory OrderItem.fromJson(Map<String, dynamic> json) {
     final delivery = mapv(json['delivery']);
@@ -349,13 +405,19 @@ class OrderItem {
       name: str(json['name'], str(json['customer_name'], 'Sin nombre')),
       phone: str(json['phone']),
       location: str(json['location']),
-      variantName: str(json['variantName'], str(json['variant_name'], str(json['product']))),
+      variantName: str(
+        json['variantName'],
+        str(json['variant_name'], str(json['product'])),
+      ),
       quantity: intv(json['quantity'], 1),
       unitPrice: dub(json['unitPrice'], dub(json['unit_price'])),
       total: dub(json['total']),
       currency: str(json['currency'], 'DOP'),
       status: str(json['status'], 'nuevo').toLowerCase(),
-      receivedAt: str(json['receivedAt'], str(json['received_at'], str(json['created_at']))),
+      receivedAt: str(
+        json['receivedAt'],
+        str(json['received_at'], str(json['created_at'])),
+      ),
       orderNumber: str(json['orderNumber'], str(json['order_number'])),
       notes: str(json['notes']),
       deliveryAddress: str(delivery['address'], str(json['address'])),
@@ -366,7 +428,8 @@ class OrderItem {
     );
   }
 
-  String get label => orderNumber.isNotEmpty ? '#$orderNumber' : '#${id.split('-').last}';
+  String get label =>
+      orderNumber.isNotEmpty ? '#$orderNumber' : '#${id.split('-').last}';
 }
 
 class CatalogProduct {
@@ -391,15 +454,23 @@ class CatalogProduct {
   final String imageUrl;
 
   factory CatalogProduct.fromJson(Map<String, dynamic> json) => CatalogProduct(
-        id: str(json['id'], str(json['productId'])),
-        name: str(json['name'], str(json['product_name'], 'Producto')),
-        presentations: listv(json['presentations']).map(CatalogPresentation.fromJson).toList(),
-        category: str(json['category'], str(json['category_name'], str(json['kind']))).trim(),
-        imageUrl: str(
-          json['image_url'],
-          str(json['imageUrl'], str(json['image'], str(json['photo_url'], str(json['thumbnail'])))),
-        ).trim(),
-      );
+    id: str(json['id'], str(json['productId'])),
+    name: str(json['name'], str(json['product_name'], 'Producto')),
+    presentations: listv(
+      json['presentations'],
+    ).map(CatalogPresentation.fromJson).toList(),
+    category: str(
+      json['category'],
+      str(json['category_name'], str(json['kind'])),
+    ).trim(),
+    imageUrl: str(
+      json['image_url'],
+      str(
+        json['imageUrl'],
+        str(json['image'], str(json['photo_url'], str(json['thumbnail']))),
+      ),
+    ).trim(),
+  );
 }
 
 class CatalogPresentation {
@@ -465,13 +536,13 @@ class FollowupRow {
   final String note;
 
   factory FollowupRow.fromJson(Map<String, dynamic> json) => FollowupRow(
-        id: str(json['id']),
-        customerId: str(json['customer_id']),
-        customerName: str(json['customer_name'], str(json['name'], 'Cliente')),
-        scheduledAt: str(json['scheduled_at']),
-        status: str(json['status'], 'pending'),
-        note: str(json['note'], str(json['body'], str(json['message']))),
-      );
+    id: str(json['id']),
+    customerId: str(json['customer_id']),
+    customerName: str(json['customer_name'], str(json['name'], 'Cliente')),
+    scheduledAt: str(json['scheduled_at']),
+    status: str(json['status'], 'pending'),
+    note: str(json['note'], str(json['body'], str(json['message']))),
+  );
 }
 
 class DeliverySession {
@@ -500,12 +571,18 @@ class DeliverySession {
     return DeliverySession(
       id: str(json['id'], str(json['session_id'])),
       orderId: str(json['order_id']),
-      courierName: str(json['delivery_user_name'], str(json['courier_name'], 'Repartidor')),
+      courierName: str(
+        json['delivery_user_name'],
+        str(json['courier_name'], 'Repartidor'),
+      ),
       status: str(json['status'], 'activa'),
       startedAt: str(json['started_at'], str(json['created_at'])),
       lat: position['latitude'] == null ? null : dub(position['latitude']),
       lng: position['longitude'] == null ? null : dub(position['longitude']),
-      updatedAt: str(position['at'], str(position['updated_at'], str(json['updated_at']))),
+      updatedAt: str(
+        position['at'],
+        str(position['updated_at'], str(json['updated_at'])),
+      ),
     );
   }
 }
@@ -541,17 +618,18 @@ class CourierPosition {
   final bool suspicious;
   final List<String> orderIds;
 
-  bool get hasPosition => latitude != null && longitude != null && state != 'no_location';
+  bool get hasPosition =>
+      latitude != null && longitude != null && state != 'no_location';
 
   bool get isLive => state == 'live';
 
   String get stateLabel => switch (state) {
-        'live' => 'En vivo',
-        'delayed' => 'Con retraso',
-        'no_signal' => 'Sin señal',
-        'no_location' => 'Sin ubicación',
-        _ => state,
-      };
+    'live' => 'En vivo',
+    'delayed' => 'Con retraso',
+    'no_signal' => 'Sin señal',
+    'no_location' => 'Sin ubicación',
+    _ => state,
+  };
 
   String get ageLabel {
     final seconds = ageSeconds;
@@ -562,18 +640,20 @@ class CourierPosition {
     return 'hace ${(minutes / 60).floor()} h';
   }
 
-  factory CourierPosition.fromJson(Map<String, dynamic> json) => CourierPosition(
-        courierId: str(json['courier_id'], str(json['id'])),
-        courierName: str(json['courier_name'], 'Mensajero'),
-        state: str(json['state'], 'no_location'),
-        ageSeconds: json['age_seconds'] == null ? null : intv(json['age_seconds']),
-        latitude: json['latitude'] == null ? null : dub(json['latitude']),
-        longitude: json['longitude'] == null ? null : dub(json['longitude']),
-        accuracyMeters: json['accuracy_m'] == null ? null : dub(json['accuracy_m']),
-        at: str(json['at']),
-        suspicious: json['suspicious'] == true,
-        orderIds: listv(json['order_ids']).map((row) => '$row').toList(),
-      );
+  factory CourierPosition.fromJson(
+    Map<String, dynamic> json,
+  ) => CourierPosition(
+    courierId: str(json['courier_id'], str(json['id'])),
+    courierName: str(json['courier_name'], 'Mensajero'),
+    state: str(json['state'], 'no_location'),
+    ageSeconds: json['age_seconds'] == null ? null : intv(json['age_seconds']),
+    latitude: json['latitude'] == null ? null : dub(json['latitude']),
+    longitude: json['longitude'] == null ? null : dub(json['longitude']),
+    accuracyMeters: json['accuracy_m'] == null ? null : dub(json['accuracy_m']),
+    at: str(json['at']),
+    suspicious: json['suspicious'] == true,
+    orderIds: listv(json['order_ids']).map((row) => '$row').toList(),
+  );
 }
 
 /// Resultado de la corrección ortográfica del servidor (IA).
@@ -589,7 +669,8 @@ class ProofreadingEdit {
   final String word;
   final String replacement;
 
-  factory ProofreadingEdit.fromJson(Map<String, dynamic> json) => ProofreadingEdit(
+  factory ProofreadingEdit.fromJson(Map<String, dynamic> json) =>
+      ProofreadingEdit(
         word: str(json['word']),
         replacement: str(json['replacement'], str(json['after'])),
       );
@@ -618,12 +699,12 @@ class ProofreadingResult {
   bool get hasChanges => correctedText.isNotEmpty && correctedText != word;
 
   const ProofreadingResult.unavailable()
-      : available = false,
-        correctedText = '',
-        word = '',
-        replacement = '',
-        edits = const [],
-        doubts = const [];
+    : available = false,
+      correctedText = '',
+      word = '',
+      replacement = '',
+      edits = const [],
+      doubts = const [];
 
   factory ProofreadingResult.fromJson(Map<String, dynamic> json) {
     if (json.isEmpty) return const ProofreadingResult.unavailable();
@@ -652,7 +733,11 @@ class ProofreadingResult {
 ///   · `reason` → `awaiting_customer` (el último mensaje es nuestro),
 ///                `ai_unavailable` (sin clave configurada), `daily_limit`…
 class ReplySuggestion {
-  const ReplySuggestion({required this.text, required this.reason, required this.ai});
+  const ReplySuggestion({
+    required this.text,
+    required this.reason,
+    required this.ai,
+  });
 
   final String text;
   final String reason;
@@ -678,7 +763,8 @@ class ReplySuggestion {
     }
   }
 
-  factory ReplySuggestion.fromJson(Map<String, dynamic> json) => ReplySuggestion(
+  factory ReplySuggestion.fromJson(Map<String, dynamic> json) =>
+      ReplySuggestion(
         text: str(json['text']),
         reason: str(json['reason']),
         ai: json['ai'] == true,

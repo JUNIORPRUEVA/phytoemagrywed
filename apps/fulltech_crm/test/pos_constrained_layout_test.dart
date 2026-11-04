@@ -199,7 +199,7 @@ void _pieDeCobroAlcanzable() {
 
     expect(tester.takeException(), isNull, reason: 'El panel no puede desbordar');
     // La prueba clave: el botón está EN PANTALLA y recibe el toque.
-    final cobrar = find.text('Crear pedido');
+    final cobrar = find.byTooltip('Crear pedido');
     expect(cobrar.hitTestable(), findsOneWidget,
         reason: 'El botón de cobro debe ser alcanzable con el ratón a 1264x681');
     await tester.tap(cobrar.hitTestable());

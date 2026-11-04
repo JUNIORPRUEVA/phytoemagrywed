@@ -1,7 +1,8 @@
 import {randomUUID,createHash} from 'node:crypto';
 import {createSqlQuery} from './sql-query.mjs';
 import {createSmartFulfillment} from './smart-fulfillment.mjs';
-import {coordinates,insidePolygon,regionalPrice,normalizedItems,deliveryPriceMeters,DEFAULT_DELIVERY_POLICY,inOperatingHours,smartError as fail} from './smart-commerce-rules.mjs';
+import {coordinates,insidePolygon,regionalPrice,normalizedItems,deliveryPriceMeters,inOperatingHours,smartError as fail} from './smart-commerce-rules.mjs';
+import {quoteCustomerDelivery} from './delivery-customer-policy.mjs';
 
 const clean=(v,n=160)=>String(v??'').trim().slice(0,n);
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
@@ -11,7 +12,9 @@ async function confirmedCapacity(provider,input){
   const controller=new AbortController();let timeout;
   try{return await Promise.race([Promise.resolve().then(()=>provider({...input,signal:controller.signal})),new Promise(resolve=>{timeout=setTimeout(()=>{controller.abort();resolve(null);},3000);})]);}catch{return null;}finally{clearTimeout(timeout);}
 }
-const initialConfig=()=>({branches:[],origins:[],offers:[],zones:[],banks:[],policy:{...DEFAULT_DELIVERY_POLICY},defaultOriginId:null,cashOnDelivery:false});
+// No commercial tariff is active until an administrator records one explicitly.
+const initialConfig=()=>({branches:[],origins:[],offers:[],zones:[],banks:[],policy:null,defaultOriginId:null,cashOnDelivery:false});
+const completePolicy=(policy)=>policy&&['minimumFeeDop','firstMeters','firstFeeDop','incrementMeters','incrementFeeDop','maxMeters','active'].every(key=>Object.hasOwn(policy,key));
 
 /** Additive quote/preflight layer. It never creates a second order or stock ledger. */
 export async function createSmartCommerce({enabled=false,backend,handle,catalog,db,customers,audit,router,capacityProvider,supplierNotifier=null,faultInjector=null,clock=()=>new Date()}={}){
@@ -26,7 +29,11 @@ export async function createSmartCommerce({enabled=false,backend,handle,catalog,
   async function record(action,id,actor){await audit?.record({entity:'smart_commerce',entityId:id,action,summary:action,data:{actor_id:actor?.id||null},idempotencyKey:`smart:${action}:${id}`});}
   async function saveConfig(input,actor){
     if(!Number.isSafeInteger(input.expectedVersion))throw fail('version_required','Recarga la configuración antes de guardar.',409);
-    const next=initialConfig();next.policy={...DEFAULT_DELIVERY_POLICY,...input.policy};deliveryPriceMeters(1,next.policy);
+    const next=initialConfig();
+    if(input.policy!=null){
+      if(!completePolicy(input.policy))throw fail('delivery_policy_incomplete','Configura todos los importes y límites de la tarifa antes de activarla.');
+      next.policy={...input.policy};deliveryPriceMeters(1,next.policy);
+    }
     for(const key of ['branches','origins','offers','zones','banks']){if(!Array.isArray(input[key])||input[key].length>1000)throw fail('invalid_config',`La lista ${key} no es válida.`);next[key]=[];const seen=new Set();for(const row of input[key]){if(!validId(row.id)||seen.has(row.id))throw fail('invalid_config','Hay identificadores duplicados o no válidos.');seen.add(row.id);}}
     for(const b of input.branches){if(clean(b.name).length<2)throw fail('invalid_branch','Falta el nombre de la sucursal.');const supplier=b.supplierId?await db.get('suppliers',b.supplierId):null;if(b.supplierId&&(!supplier||supplier.active===false))throw fail('invalid_supplier','El proveedor no existe o está inactivo.');next.branches.push({id:b.id,name:clean(b.name),supplierId:supplier?.id||null,active:b.active===true});}
     for(const o of input.origins){if(!next.branches.some(b=>b.id===o.branchId))throw fail('invalid_branch','El origen necesita una sucursal existente.');const point=coordinates(o);next.origins.push({id:o.id,branchId:o.branchId,city:clean(o.city,100),address:clean(o.address,240),...point,active:o.active===true,delivery:o.delivery===true,pickup:o.pickup===true});if(!clean(o.city))throw fail('invalid_origin','Indica la ciudad real del origen.');}
@@ -37,7 +44,9 @@ export async function createSmartCommerce({enabled=false,backend,handle,catalog,
       const area=Math.abs(polygon.slice(1).reduce((sum,p,i)=>sum+polygon[i][0]*p[1]-p[0]*polygon[i][1],0));if(area<1e-12)throw fail('invalid_polygon','El polígono no tiene superficie.');
       if(!Array.isArray(z.originIds)||z.originIds.some(id=>!next.origins.some(o=>o.id===id)))throw fail('invalid_origin','La zona contiene un origen desconocido.');
       const hours=z.hours||[];if(!Array.isArray(hours)||hours.some(h=>!Number.isInteger(h.day)||h.day<0||h.day>6||!Number.isInteger(h.startMinute)||!Number.isInteger(h.endMinute)||h.startMinute<0||h.endMinute>1440||h.startMinute>=h.endMinute))throw fail('invalid_hours','Los horarios deben usar día 0–6 e inicio/fin en minutos.');
-      const policy={...next.policy,...z.policy};deliveryPriceMeters(1,policy);next.zones.push({id:z.id,name:clean(z.name,100),active:z.active===true,priority:Number.isSafeInteger(z.priority)?z.priority:0,polygon,originIds:[...new Set(z.originIds)],hours,policy});
+      const policy=next.policy?{...next.policy,...z.policy}:z.policy;
+      if(policy!=null){if(!completePolicy(policy))throw fail('delivery_policy_incomplete','Configura la tarifa completa de la zona.');deliveryPriceMeters(1,policy);}
+      next.zones.push({id:z.id,name:clean(z.name,100),active:z.active===true,priority:Number.isSafeInteger(z.priority)?z.priority:0,polygon,originIds:[...new Set(z.originIds)],hours,policy:policy??null});
     }
     const all=new Map((await catalog.list()).map(p=>[p.id,p])),bindings=new Set();
     for(const o of input.offers){
@@ -53,7 +62,15 @@ export async function createSmartCommerce({enabled=false,backend,handle,catalog,
     await record('smart.config.updated',String(changed.rows[0].version),actor);return config();
   }
   const zoneAt=(c,point)=>point?c.zones.filter(z=>z.active&&insidePolygon(point,z.polygon)).sort((a,b)=>b.priority-a.priority||a.id.localeCompare(b.id))[0]||null:null;
-  async function resolveLocation(input){const point=coordinates(input),c=await config(),zone=zoneAt(c,point);return {zone:zone?{id:zone.id,name:zone.name}:null,accuracyAcceptable:point.accuracy===undefined||point.accuracy<=100,automaticDeliveryConfigured:!!zone&&router.configured};}
+  async function resolveLocation(input){
+    const point=coordinates(input),c=await config(),zone=zoneAt(c,point);
+    const shared=(await db.list('delivery_customer_policies',{limit:500}))
+      .find(row=>row.company_id==='fulltech')??null;
+    const tariffReady=shared?shared.active===true:zone?.policy?.active===true;
+    return {zone:zone?{id:zone.id,name:zone.name}:null,
+      accuracyAcceptable:point.accuracy===undefined||point.accuracy<=100,
+      automaticDeliveryConfigured:!!zone&&router.configured&&tariffReady};
+  }
   async function destinationFor(account,input){
     if(input.addressId){const loc=await customers.getLocation(input.addressId);if(!account.customer_id||!loc||loc.customer_id!==account.customer_id)throw fail('address_not_found','La dirección no existe.',404);return {...coordinates(loc),source:'reused_location',address:clean(loc.address,240)};}
     if(!input.destination)return null;return {...coordinates(input.destination),source:input.destination.source==='browser_geolocation'?'browser_geolocation':'manual_coordinates',address:clean(input.address,240)};
@@ -80,7 +97,7 @@ export async function createSmartCommerce({enabled=false,backend,handle,catalog,
     if(managedFulfillment){for(let i=reasons.length-1;i>=0;i--)if(reasons[i]==='supplier_confirmation_required')reasons.splice(i,1);}
     const native=(await catalog.publicOrderItems(items));if(native.length!==lines.length)throw fail('invalid_cart','Actualiza el carrito.',409);
     const stock=await catalog.checkOrder({smart_reservation_check:managedFulfillment,items:items.map(i=>({variantId:i.id,quantity:i.quantity}))});if(!stock.ok)throw fail(stock.error||'insufficient_stock',stock.message||'El stock cambió.',409);
-    let feeCents=null,route=null,capacity=null;
+    let feeCents=null,route=null,capacity=null,deliveryPolicyId=null,deliveryPolicyUpdatedAt=null;
     if(method==='pickup'){if(managedFulfillment&&[...groups.keys()].every(id=>c.origins.some(o=>o.id===id&&o.pickup)))feeCents=0;else reasons.push('pickup_reservation_contract_pending');}
     else if(method==='intercity')reasons.push('intercity_manual_quote');
     else if(groups.size!==1)reasons.push('multiple_or_missing_origins');
@@ -91,12 +108,39 @@ export async function createSmartCommerce({enabled=false,backend,handle,catalog,
       if(!origin.delivery||!zone.originIds.includes(origin.id))reasons.push('origin_not_covered');
       else if(!inOperatingHours(zone,clock().getTime()))reasons.push('outside_operating_hours');
       else{
-        route=await router.route(origin,destination);if(!route.ok)reasons.push(route.reason);else{const price=deliveryPriceMeters(route.meters,zone.policy);if(!price.eligible)reasons.push(price.reason);else{feeCents=price.feeDop*100;capacity=await confirmedCapacity(capacityProvider,{zoneId:zone.id,originId:origin.id,destination});if(capacity?.available!==true)reasons.push('capacity_confirmation_pending');}}
+        const sharedRules=await db.list('delivery_customer_policies',{limit:500});
+        const shared=sharedRules.find(row=>row.company_id==='fulltech')??null;
+        if(shared&&!shared.active)reasons.push('delivery_policy_inactive');
+        else if(!shared&&!zone.policy)reasons.push('delivery_policy_unconfigured');
+        else{
+          route=await router.route(origin,destination);
+          if(!route?.ok)reasons.push(route?.reason??'road_route_required');
+          else{
+            const priced=shared
+              ? quoteCustomerDelivery({policy:shared,route,zoneId:zone.id})
+              : (()=>{const legacy=deliveryPriceMeters(route.meters,zone.policy);return legacy.eligible
+                ? {ok:true,fee_cents:legacy.feeDop*100}
+                : {ok:false,error:legacy.reason};})();
+            if(!priced.ok)reasons.push(priced.error);
+            else{
+              feeCents=priced.fee_cents;
+              deliveryPolicyId=shared?.id??null;
+              deliveryPolicyUpdatedAt=shared?.updated_at??null;
+              capacity=await confirmedCapacity(capacityProvider,{zoneId:zone.id,originId:origin.id,destination});
+              if(capacity?.available!==true)reasons.push('capacity_confirmation_pending');
+            }
+          }
+        }
       }
     }
     const subtotalCents=lines.reduce((n,l)=>n+l.unitPriceCents*l.quantity,0);if(!Number.isSafeInteger(subtotalCents)||!Number.isSafeInteger(subtotalCents+(feeCents||0)))throw fail('invalid_total','El total está fuera de rango.');
     const paymentMethods=['arrange_later',...(c.banks.some(b=>b.active)?['transfer_now','transfer_later']:[]),...(c.cashOnDelivery&&capacity?.available===true&&capacity?.cashCollection===true?['cash']:[])];
-    const result={items,lines,groups:[...groups.values()],destination,fulfillment:method,zone:zone?{id:zone.id,name:zone.name}:null,configVersion:c.version,status:reasons.length?'manual_quote_required':'priced',reasons:[...new Set(reasons)],subtotalCents,deliveryFeeCents:reasons.length?null:feeCents,estimatedDeliveryFeeCents:feeCents,totalCents:reasons.length?null:subtotalCents+feeCents,route:route?.ok?{meters:route.meters,durationSeconds:route.durationSeconds??null,provider:clean(route.provider,40)}:null,paymentMethods,currency:'DOP',saveAddressPreference:input.saveAddressPreference===true};
+    const pickupOrigin=groups.size===1?c.origins.find(o=>o.id===[...groups.keys()][0]):null;
+    const pickupBranch=pickupOrigin?c.branches.find(b=>b.id===pickupOrigin.branchId):null;
+    const pickup=pickupOrigin?{origin_id:pickupOrigin.id,supplier_id:pickupBranch?.supplierId??null,
+      name:pickupBranch?.name??pickupOrigin.city,address:pickupOrigin.address,
+      latitude:pickupOrigin.latitude,longitude:pickupOrigin.longitude}:null;
+    const result={items,lines,groups:[...groups.values()],destination,pickup,fulfillment:method,zone:zone?{id:zone.id,name:zone.name}:null,configVersion:c.version,deliveryPolicyId,deliveryPolicyUpdatedAt,status:reasons.length?'manual_quote_required':'priced',reasons:[...new Set(reasons)],subtotalCents,deliveryFeeCents:reasons.length?null:feeCents,estimatedDeliveryFeeCents:feeCents,totalCents:reasons.length?null:subtotalCents+feeCents,route:route?.ok?{meters:route.meters,durationSeconds:route.durationSeconds??null,provider:clean(route.provider,40)}:null,paymentMethods,currency:'DOP',saveAddressPreference:input.saveAddressPreference===true};
     result.managedFulfillment=managedFulfillment;result.address=clean(input.address,240);return {...result,fingerprint:hash(result)};
   }
   async function quote(account,input){const proposed=await plan(account,input),id='ftq_'+randomUUID().replaceAll('-',''),now=clock(),expiresAt=new Date(now.getTime()+5*60000).toISOString(),doc={...proposed,id,expiresAt,input:{items:proposed.items,destination:proposed.destination,destinationConfirmed:true,fulfillment:proposed.fulfillment,address:proposed.address,saveAddressPreference:proposed.saveAddressPreference}};

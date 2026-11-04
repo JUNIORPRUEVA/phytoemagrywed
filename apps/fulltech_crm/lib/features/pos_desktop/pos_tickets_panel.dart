@@ -38,15 +38,23 @@ class PosTicketSummary {
   final String updatedAt;
   final String customerName;
   final int lines;
-  final int totalCents;
+  final int? totalCents;
   final Map<String, dynamic> raw;
 
   static PosTicketSummary fromJson(Map<String, dynamic> row) {
     final draft = mapv(row['draft']);
     final items = listv(draft['items']);
+    final hasPrices =
+        items.isNotEmpty &&
+        items.every(
+          (line) => line['unitPriceCents'] is num || line['price_cents'] is num,
+        );
     final discount = mapv(draft['discount']);
     final subtotal = items.fold<int>(0, (sum, line) {
-      final price = numv(line['unitPriceCents'] ?? line['price_cents'], 0).toInt();
+      final price = numv(
+        line['unitPriceCents'] ?? line['price_cents'],
+        0,
+      ).toInt();
       final quantity = numv(line['quantity'], 1).toInt();
       return sum + price * quantity;
     });
@@ -54,8 +62,8 @@ class PosTicketSummary {
     final reduction = discount['type'] == 'percent'
         ? (subtotal * value / 100).round()
         : discount['type'] == 'amount'
-            ? (value * 100).round()
-            : 0;
+        ? (value * 100).round()
+        : 0;
     final delivery = (numv(draft['deliveryFee'], 0).toDouble() * 100).round();
     return PosTicketSummary(
       id: str(row['id']),
@@ -65,7 +73,7 @@ class PosTicketSummary {
       updatedAt: str(row['updated_at']),
       customerName: str(mapv(draft['customer'])['name']),
       lines: items.length,
-      totalCents: subtotal - reduction + delivery,
+      totalCents: hasPrices ? subtotal - reduction + delivery : null,
       raw: row,
     );
   }
@@ -145,25 +153,42 @@ Future<PosTicketSummary?> showTicketsDialog(
                       if (error != null)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 8),
-                          child: Text(error!, style: TextStyle(fontSize: 12.5, color: p.danger)),
+                          child: Text(
+                            error!,
+                            style: TextStyle(fontSize: 12.5, color: p.danger),
+                          ),
                         ),
                       Expanded(
                         child: tickets.isEmpty
                             ? Center(
-                                child: Text('No hay tickets guardados.', style: TextStyle(fontSize: 13, color: p.inkSecondary)),
+                                child: Text(
+                                  'No hay tickets guardados.',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: p.inkSecondary,
+                                  ),
+                                ),
                               )
                             : ListView.separated(
                                 itemCount: tickets.length,
-                                separatorBuilder: (_, _) => Divider(height: 1, color: p.borderSoft),
+                                separatorBuilder: (_, _) =>
+                                    Divider(height: 1, color: p.borderSoft),
                                 itemBuilder: (context, index) {
                                   final ticket = tickets[index];
                                   return ListTile(
                                     dense: true,
-                                    title: Text('${ticket.name} · ${ticket.customerName.isEmpty ? 'sin cliente' : ticket.customerName}'),
+                                    title: Text(
+                                      ticket.customerName.isEmpty
+                                          ? ticket.name
+                                          : ticket.customerName,
+                                    ),
                                     subtitle: Text(
                                       [
                                         '${ticket.lines} artículo(s)',
-                                        CrmFormat.money(ticket.totalCents / 100),
+                                        if (ticket.totalCents != null)
+                                          CrmFormat.money(
+                                            ticket.totalCents! / 100,
+                                          ),
                                         CrmFormat.ago(ticket.updatedAt),
                                         if (!ticket.isOpen) ticket.status,
                                       ].join(' · '),
@@ -174,19 +199,41 @@ Future<PosTicketSummary?> showTicketsDialog(
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
                                               TextButton(
-                                                onPressed: () => Navigator.of(dialogContext).pop(ticket),
+                                                onPressed: () => Navigator.of(
+                                                  dialogContext,
+                                                ).pop(ticket),
                                                 child: const Text('Reanudar'),
                                               ),
                                               IconButton(
                                                 tooltip: 'Descartar',
-                                                onPressed: busyId == ticket.id ? null : () => discard(ticket),
+                                                onPressed: busyId == ticket.id
+                                                    ? null
+                                                    : () => discard(ticket),
                                                 icon: busyId == ticket.id
-                                                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                                                    : Icon(Icons.delete_outline_rounded, size: 18, color: p.danger),
+                                                    ? const SizedBox(
+                                                        width: 16,
+                                                        height: 16,
+                                                        child:
+                                                            CircularProgressIndicator(
+                                                              strokeWidth: 2,
+                                                            ),
+                                                      )
+                                                    : Icon(
+                                                        Icons
+                                                            .delete_outline_rounded,
+                                                        size: 18,
+                                                        color: p.danger,
+                                                      ),
                                               ),
                                             ],
                                           )
-                                        : Text(ticket.status, style: TextStyle(fontSize: 11.5, color: p.inkSecondary)),
+                                        : Text(
+                                            ticket.status,
+                                            style: TextStyle(
+                                              fontSize: 11.5,
+                                              color: p.inkSecondary,
+                                            ),
+                                          ),
                                   );
                                 },
                               ),
@@ -195,7 +242,10 @@ Future<PosTicketSummary?> showTicketsDialog(
                   ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('Cerrar')),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cerrar'),
+            ),
             TextButton(onPressed: load, child: const Text('Recargar')),
           ],
         );
@@ -259,7 +309,9 @@ Future<PosTicketSummary?> showTicketsDialog(
           manualName: str(manual['name']),
           manualKind: str(manual['kind'], 'product'),
           manualPrice: precio,
-          manualCost: manual['cost'] == null ? null : numv(manual['cost'], 0).toDouble(),
+          manualCost: manual['cost'] == null
+              ? null
+              : numv(manual['cost'], 0).toDouble(),
         ),
       );
       continue;
@@ -282,6 +334,7 @@ Future<PosTicketSummary?> showTicketsDialog(
         presentationName: str(row['label'], str(row['presentation'])),
         unitPriceCents: (numv(row['price'], 0).toDouble() * 100).round(),
         quantity: quantity,
+        supplierId: str(item['supplierId'], str(item['supplier_id'])),
         discountType: tipoDescuento,
         discountValue: valorDescuento,
       ),
@@ -290,6 +343,8 @@ Future<PosTicketSummary?> showTicketsDialog(
   return (
     customer: customer,
     lines: lines,
-    problem: missing.isEmpty ? null : 'Estos artículos ya no están en el catálogo: ${missing.join(', ')}.',
+    problem: missing.isEmpty
+        ? null
+        : 'Estos artículos ya no están en el catálogo: ${missing.join(', ')}.',
   );
 }

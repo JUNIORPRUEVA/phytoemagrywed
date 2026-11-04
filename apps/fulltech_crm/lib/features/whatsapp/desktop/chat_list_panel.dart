@@ -6,6 +6,7 @@ import '../../../data/models/crm_models.dart';
 import '../../common/pwa_icon.dart';
 import 'chat_desktop_theme.dart';
 import 'chat_filters.dart';
+import 'ai_agent_menus.dart';
 
 /// Panel izquierdo de conversaciones: título, acciones (nuevo chat, filtros,
 /// menú), buscador cuadrado y lista.
@@ -26,6 +27,13 @@ class ChatListPanel extends StatefulWidget {
     required this.onOpenFilters,
     required this.onRefresh,
     required this.onNewConversation,
+    this.aiEnabled = false,
+    this.aiLoaded = false,
+    this.aiBusy = false,
+    this.aiUnavailable = false,
+    this.onToggleAi,
+    this.onRetryAi,
+    this.aiTooltip = 'Asistente IA',
     this.onAction,
     this.selecting = false,
     this.selectedIds = const {},
@@ -49,6 +57,13 @@ class ChatListPanel extends StatefulWidget {
 
   /// Abre el diálogo de «nuevo mensaje».
   final VoidCallback onNewConversation;
+  final bool aiEnabled;
+  final bool aiLoaded;
+  final bool aiBusy;
+  final bool aiUnavailable;
+  final VoidCallback? onToggleAi;
+  final VoidCallback? onRetryAi;
+  final String aiTooltip;
 
   /// Acciones por fila (abrir, leído, foto, seguimiento, asignación,
   /// finalizar, archivar, seleccionar).
@@ -95,17 +110,26 @@ class _ChatListPanelState extends State<ChatListPanel> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SizedBox(
-            height: 52,
+            height: 40,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 6, 0),
+              padding: const EdgeInsets.fromLTRB(8, 0, 4, 0),
               child: Row(
                 children: [
-                  Expanded(child: Text('WhatsApp', style: t.title.copyWith(fontSize: 19))),
+                  Expanded(child: Text('WhatsApp', style: t.title)),
                   _PanelAction(
                     asset: PwaIcons.plus,
                     tooltip: 'Nuevo mensaje',
                     accent: true,
                     onTap: widget.onNewConversation,
+                  ),
+                  AiGlobalMenu(
+                    enabled: widget.aiEnabled,
+                    loaded: widget.aiLoaded,
+                    busy: widget.aiBusy,
+                    unavailable: widget.aiUnavailable,
+                    tooltip: widget.aiTooltip,
+                    onToggle: widget.onToggleAi,
+                    onRetry: widget.onRetryAi,
                   ),
                   _FilterButton(
                     active: !widget.filters.isDefault,
@@ -120,8 +144,13 @@ class _ChatListPanelState extends State<ChatListPanel> {
               ),
             ),
           ),
+          /*
+           * BUSCADOR DE BORDE A BORDE: antes llevaba 10 px a cada lado y la barra
+           * parecía flotando dentro de la columna. Con 8 px (solo para que la
+           * sombra respire) ocupa todo el ancho útil de la lista.
+           */
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
             child: _SearchBox(
               controller: widget.search,
               focusNode: _searchFocus,
@@ -495,15 +524,31 @@ class _ConversationListTileState extends State<ConversationListTile> {
         onTap: widget.onTap,
         behavior: HitTestBehavior.opaque,
         child: Container(
-          height: 82,
-          color: background,
+          height: ChatDesktopMetrics.rowHeight,
+          margin: const EdgeInsets.fromLTRB(6, 2, 8, 2),
+          decoration: BoxDecoration(
+            color: background,
+            /*
+             * TARJETA, no fila a sangre: esquinas redondeadas y un borde suave.
+             * El separador inferior desaparece para que la lista respire como
+             * en WhatsApp Web / Telegram Desktop.
+             */
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: widget.selected && !widget.selecting
+                  ? c.accent.withValues(alpha: 0.45)
+                  : Colors.transparent,
+            ),
+          ),
           child: Row(
             children: [
-              Container(
-                width: 3,
-                height: double.infinity,
-                color: widget.selected && !widget.selecting ? c.accent : Colors.transparent,
-              ),
+              if (widget.selected && !widget.selecting)
+                Container(
+                  width: 3,
+                  height: 22,
+                  margin: const EdgeInsets.only(left: 2),
+                  decoration: BoxDecoration(color: c.accent, borderRadius: BorderRadius.circular(3)),
+                ),
               if (widget.selecting)
                 Padding(
                   padding: const EdgeInsets.only(left: 8, right: 2),
@@ -563,7 +608,7 @@ class _ConversationListTileState extends State<ConversationListTile> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 1),
                     Row(
                       children: [
                         _TypeGlyph(type: conversation.lastType),
@@ -572,7 +617,7 @@ class _ConversationListTileState extends State<ConversationListTile> {
                             conversation.lastBody.isEmpty ? '—' : conversation.lastBody,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: t.rowPreview.copyWith(fontSize: 12.5),
+                            style: t.rowPreview.copyWith(fontSize: 13),
                           ),
                         ),
                         if (unread)
@@ -598,7 +643,7 @@ class _ConversationListTileState extends State<ConversationListTile> {
                           ),
                       ],
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 2),
                     // Asignación + etapa del cliente.
                     Row(
                       children: [
@@ -696,18 +741,18 @@ class _MetaChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = ChatPalette.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
-        color: c.fieldBg,
-        borderRadius: BorderRadius.circular(5),
+        // Pastel: el mismo tono del dato, muy diluido, con esquinas de pastilla.
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 11, color: color),
-          const SizedBox(width: 3),
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
           Flexible(
             child: Text(
               label,
@@ -715,7 +760,7 @@ class _MetaChip extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontFamily: ChatDesktopMetrics.fontFamily,
-                fontSize: 9.5,
+                fontSize: 11,
                 fontWeight: FontWeight.w600,
                 color: color,
               ),

@@ -21,10 +21,13 @@ import '../data/models/crm_models.dart';
 /// RECORTADO (`partial`), las pantallas lo dicen en vez de mentir con una
 /// lista incompleta.
 class CrmState extends ChangeNotifier {
-  CrmState(this.repository, {OutboxService? outbox}) : outbox = outbox ?? OutboxService(
-          store: OutboxStore(const PrefsKeyValueStore()),
-          transport: RepoOutboxTransport(repository),
-        );
+  CrmState(this.repository, {OutboxService? outbox})
+    : outbox =
+          outbox ??
+          OutboxService(
+            store: OutboxStore(const PrefsKeyValueStore()),
+            transport: RepoOutboxTransport(repository),
+          );
 
   final CrmRepository repository;
   final OutboxService outbox;
@@ -75,27 +78,38 @@ class CrmState extends ChangeNotifier {
   bool get flushing => _flushing;
 
   List<Map<String, dynamic>> get rawItems => listv(_snapshot['items']);
-  List<OrderItem> get orders =>
-      rawItems.where((row) => str(row['type']) == 'order_intent').map(OrderItem.fromJson).toList();
+  List<OrderItem> get orders => rawItems
+      .where((row) => str(row['type']) == 'order_intent')
+      .map(OrderItem.fromJson)
+      .toList();
 
   List<Customer> get customers =>
-      _fullCustomers ?? listv(_snapshot['customers']).map(Customer.fromJson).toList();
+      _fullCustomers ??
+      listv(_snapshot['customers']).map(Customer.fromJson).toList();
 
   List<Conversation> get conversations =>
-      _fullConversations ?? listv(_snapshot['conversations']).map(Conversation.fromJson).toList();
+      _fullConversations ??
+      listv(_snapshot['conversations']).map(Conversation.fromJson).toList();
 
   Map<String, dynamic> get counts => mapv(_snapshot['conversationCounts']);
   Map<String, dynamic> get stats => mapv(_snapshot['stats']);
   Map<String, dynamic> get followups => mapv(_snapshot['followups']);
-  List<Map<String, dynamic>> get notifications => listv(_snapshot['notifications']);
+  List<Map<String, dynamic>> get notifications =>
+      listv(_snapshot['notifications']);
   List<Map<String, dynamic>> get suppliers => listv(_snapshot['suppliers']);
   List<Map<String, dynamic>> get statuses => listv(_snapshot['statuses']);
-  List<Map<String, dynamic>> get customerStages => listv(_snapshot['customerStages']);
-  List<Map<String, dynamic>> get customerTags => listv(_snapshot['customerTags']);
-  List<DeliverySession> get deliveryTracking => listv(_snapshot['deliveryTracking']).map(DeliverySession.fromJson).toList();
-  List<Map<String, dynamic>> get deliveryOrders => listv(_snapshot['deliveryOrders']);
+  List<Map<String, dynamic>> get customerStages =>
+      listv(_snapshot['customerStages']);
+  List<Map<String, dynamic>> get customerTags =>
+      listv(_snapshot['customerTags']);
+  List<DeliverySession> get deliveryTracking => listv(
+    _snapshot['deliveryTracking'],
+  ).map(DeliverySession.fromJson).toList();
+  List<Map<String, dynamic>> get deliveryOrders =>
+      listv(_snapshot['deliveryOrders']);
   List<Map<String, dynamic>> get templates => listv(_snapshot['messages']);
-  List<Map<String, dynamic>> get scheduled => listv(mapv(_snapshot['scheduled'])['items'] ?? _snapshot['scheduled']);
+  List<Map<String, dynamic>> get scheduled =>
+      listv(mapv(_snapshot['scheduled'])['items'] ?? _snapshot['scheduled']);
   String get timeZone => str(_snapshot['timeZone'], 'America/Santo_Domingo');
 
   Conversation? conversationById(String id) {
@@ -123,8 +137,9 @@ class CrmState extends ChangeNotifier {
       ? conversations.fold<int>(0, (sum, row) => sum + row.unread)
       : intv(counts['unread_total']);
 
-  int get pendingConversations =>
-      counts['pendientes'] == null ? conversations.where((row) => row.pending).length : intv(counts['pendientes']);
+  int get pendingConversations => counts['pendientes'] == null
+      ? conversations.where((row) => row.pending).length
+      : intv(counts['pendientes']);
 
   // ------------------------------------------------------------- arranque
   Future<void> boot() async {
@@ -185,6 +200,11 @@ class CrmState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> reloadSession() async {
+    _session = await repository.session();
+    notifyListeners();
+  }
+
   Future<void> refresh({bool quiet = false}) async {
     if (!quiet) {
       _loading = true;
@@ -240,7 +260,10 @@ class CrmState extends ChangeNotifier {
   ///
   /// Pedidos no tiene endpoint paginado todavía: la pantalla lo avisa y el
   /// contrato necesario queda documentado en el README.
-  Future<void> ensureFullLists({bool includeCustomers = true, bool includeConversations = true}) async {
+  Future<void> ensureFullLists({
+    bool includeCustomers = true,
+    bool includeConversations = true,
+  }) async {
     if (!partial) return;
     final tasks = <Future<void>>[];
     if (includeCustomers && _fullCustomers == null) {
@@ -256,7 +279,9 @@ class CrmState extends ChangeNotifier {
       tasks.add(() async {
         try {
           final data = await repository.conversations();
-          _fullConversations = listv(data['conversations']).map(Conversation.fromJson).toList();
+          _fullConversations = listv(
+            data['conversations'],
+          ).map(Conversation.fromJson).toList();
         } on ApiException catch (_) {
           // Igual que arriba.
         }
@@ -300,7 +325,12 @@ class CrmState extends ChangeNotifier {
   }
 
   // ------------------------------------------------------- cola sin conexión
-  Future<void> enqueueMessage(String conversationId, String body, {String? operationKey}) async {    await outbox.enqueue(
+  Future<void> enqueueMessage(
+    String conversationId,
+    String body, {
+    String? operationKey,
+  }) async {
+    await outbox.enqueue(
       kind: OutboxKind.message,
       conversationId: conversationId,
       body: body,
@@ -309,7 +339,10 @@ class CrmState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> enqueueResolved(String conversationId, {required bool resolved}) async {
+  Future<void> enqueueResolved(
+    String conversationId, {
+    required bool resolved,
+  }) async {
     await outbox.enqueue(
       kind: resolved ? OutboxKind.resolve : OutboxKind.reopen,
       conversationId: conversationId,
@@ -445,7 +478,8 @@ class CrmState extends ChangeNotifier {
   }
 
   // ------------------------------------------------------------- apariencia
-  Future<void> _loadTheme() async {    final prefs = await SharedPreferences.getInstance();
+  Future<void> _loadTheme() async {
+    final prefs = await SharedPreferences.getInstance();
     _themeMode = switch (prefs.getString(_themeKey)) {
       'light' => ThemeMode.light,
       'dark' => ThemeMode.dark,
@@ -457,13 +491,10 @@ class CrmState extends ChangeNotifier {
     _themeMode = mode;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      _themeKey,
-      switch (mode) {
-        ThemeMode.light => 'light',
-        ThemeMode.dark => 'dark',
-        ThemeMode.system => 'auto',
-      },
-    );
+    await prefs.setString(_themeKey, switch (mode) {
+      ThemeMode.light => 'light',
+      ThemeMode.dark => 'dark',
+      ThemeMode.system => 'auto',
+    });
   }
 }

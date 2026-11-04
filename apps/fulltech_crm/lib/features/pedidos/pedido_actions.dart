@@ -127,14 +127,7 @@ class _OrderActionsPanelState extends State<OrderActionsPanel> {
                     CrmButton(label: 'Finalizar', icon: Icons.task_alt_rounded, filled: false, onPressed: () => _run(_finish)),
                   ],
                   if (canAssign && !_closed)
-                    CrmButton(label: 'Asignar reparto', icon: Icons.delivery_dining_outlined, filled: false, onPressed: () => _run(_assign)),
-                  if (canAssign && !_closed)
-                    CrmButton(
-                      label: 'Reparto externo',
-                      icon: Icons.local_shipping_outlined,
-                      filled: false,
-                      onPressed: () => _run(_externalCourier),
-                    ),
+                    CrmButton(label: 'Asignar repartidor', icon: Icons.delivery_dining_outlined, filled: false, onPressed: () => _run(_assign)),
                   if (canOperate) CrmButton(label: 'Registrar cobro', icon: Icons.payments_outlined, onPressed: () => _run(_payment)),
                   if (canOperate && !_closed)
                     CrmButton(label: 'Editar pedido', icon: Icons.edit_outlined, filled: false, onPressed: () => _run(_edit)),
@@ -261,85 +254,50 @@ class _OrderActionsPanelState extends State<OrderActionsPanel> {
   }
 
   Future<String?> _assign(CrmRepository repo) async {
-    List<Map<String, dynamic>> assignees;
+    List<Map<String, dynamic>> accounts;
     try {
-      assignees = await repo.assignees();
+      accounts = await repo.phytoCourierAccounts();
     } on ApiException catch (error) {
       return error.message;
     }
     if (!mounted) return null;
-    if (assignees.isEmpty) return 'No hay repartidores disponibles para asignar.';
+    final available = accounts.where((row) =>
+        row['active'] == true && row['app_access'] == true).toList();
+    if (available.isEmpty) return 'No hay cuentas activas de FULLTECH Delivery. Autoriza un repartidor primero.';
     final picked = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (sheetContext) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            for (final row in assignees)
-              ListTile(
-                leading: CrmAvatar(
-                  label: str(row['display_name'], str(row['name'], str(row['username']))),
-                  icon: Icons.delivery_dining_outlined,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.75),
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              const ListTile(title: Text('Asignar a FULLTECH Delivery'), subtitle: Text('El pedido aparecerá en la cuenta elegida.')),
+              for (final row in available)
+                ListTile(
+                  leading: CrmAvatar(label: str(row['display_name'], 'R'), icon: Icons.delivery_dining_outlined),
+                  title: Text(str(row['display_name'], 'Repartidor')),
+                  subtitle: Text('${str(row['kind']) == 'INTERNAL' ? 'Equipo' : 'Externo'} · ${str(row['phone'])}'),
+                  onTap: () => Navigator.pop(sheetContext, row),
                 ),
-                title: Text(str(row['display_name'], str(row['name'], str(row['username'], 'Repartidor')))),
-                subtitle: Text(str(row['role'], str(row['phone'], ''))),
-                onTap: () => Navigator.pop(sheetContext, row),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
     if (picked == null) return null;
-    final id = str(picked['id'], str(picked['user_id']));
-    if (id.isEmpty) return 'Ese repartidor no tiene identificador.';
-    await repo.assignDelivery(widget.orderId, deliveryUserId: id);
-    return 'Pedido asignado.';
-  }
-
-  /// Reparto EXTERNO: se escribe el teléfono de la mensajería. Con «enviar
-  /// ahora», el servidor asigna y manda el pedido en la misma operación.
-  Future<String?> _externalCourier(CrmRepository repo) async {
-    final phoneController = TextEditingController();
-    var autoSend = true;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) => AlertDialog(
-          title: const Text('Reparto externo'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: phoneController,
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(labelText: 'Teléfono del repartidor externo'),
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Enviarle el pedido ahora'),
-                subtitle: const Text('Si la plantilla no está aprobada, el servidor dirá por qué.'),
-                value: autoSend,
-                onChanged: (value) => setDialogState(() => autoSend = value),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Asignar')),
-          ],
-        ),
-      ),
-    );
-    final phone = phoneController.text.trim();
-    phoneController.dispose();
-    if (confirmed != true) return null;
-    if (phone.length < 6) return 'Escribe un teléfono válido del repartidor externo.';
-    final result = await repo.assignExternalCourier(widget.orderId, contactPhone: phone, autoSend: autoSend);
-    if (autoSend && result['sent'] == false) {
-      return 'Asignado, pero no se pudo enviar: ${str(result['message'], str(result['send_error'], 'revisar la plantilla'))}';
+    if (str(picked['kind']) == 'INTERNAL') {
+      final userId = str(picked['user_id']);
+      if (userId.isEmpty) return 'La cuenta interna no tiene usuario del CRM vinculado.';
+      await repo.assignDelivery(widget.orderId, deliveryUserId: userId);
+    } else {
+      final phone = str(picked['phone']);
+      if (phone.isEmpty || str(picked['contact_id']).isEmpty) return 'La cuenta externa no tiene contacto de reparto vinculado.';
+      await repo.assignExternalCourier(widget.orderId, contactPhone: phone);
     }
-    return autoSend ? 'Asignado y enviado al repartidor externo.' : 'Asignado al repartidor externo.';
+    return 'Pedido asignado a ${str(picked['display_name'], 'repartidor')}. Ya puede verlo en FULLTECH Delivery.';
   }
 
   /// Editar líneas, descuento, envío y notas. El total lo recalcula el servidor.

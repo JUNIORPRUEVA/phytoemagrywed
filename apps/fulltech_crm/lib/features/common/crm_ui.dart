@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/theme/crm_theme.dart';
@@ -673,6 +675,166 @@ Future<bool> crmConfirm(BuildContext context, {required String title, required S
 }
 
 /// Aviso flotante corto.
-void crmToast(BuildContext context, String message) {
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), duration: const Duration(seconds: 3)));
+/// Tipo de aviso: cambia el color de la barra y el icono, nada más.
+enum CrmToastTone { info, success, error }
+
+/// Avisos flotantes ARRIBA A LA DERECHA.
+///
+/// Antes eran `SnackBar` abajo: en el chat tapaban el compositor justo cuando la
+/// persona tenía que seguir escribiendo, y con el teclado del móvil casi no se
+/// veían. Ahora caen en la esquina superior derecha, se apilan (máximo 4) y se
+/// van solos. Un aviso largo ocupa varias líneas en vez de recortarse.
+void crmToast(BuildContext context, String message, {CrmToastTone tone = CrmToastTone.info}) {
+  final overlay = Overlay.maybeOf(context, rootOverlay: true);
+  final text = message.trim();
+  if (overlay == null || text.isEmpty) return;
+  _CrmToastController.instance.show(overlay, text, tone);
+}
+
+class _CrmToastItem {
+  _CrmToastItem(this.id, this.message, this.tone);
+
+  final int id;
+  final String message;
+  final CrmToastTone tone;
+}
+
+class _CrmToastController extends ChangeNotifier {
+  _CrmToastController._();
+
+  static final _CrmToastController instance = _CrmToastController._();
+
+  final List<_CrmToastItem> items = [];
+  int _seq = 0;
+  OverlayEntry? _entry;
+
+  void show(OverlayState overlay, String message, CrmToastTone tone) {
+    if (_entry == null) {
+      _entry = OverlayEntry(builder: (_) => _CrmToastHost(controller: this));
+      overlay.insert(_entry!);
+    }
+    final item = _CrmToastItem(++_seq, message, tone);
+    items.add(item);
+    while (items.length > 4) {
+      items.removeAt(0);
+    }
+    notifyListeners();
+    Timer(const Duration(seconds: 5), () => remove(item.id));
+  }
+
+  /// Quita un aviso. También lo usa la ✕ cuando la persona lo cierra antes.
+  void remove(int id) {
+    final before = items.length;
+    items.removeWhere((row) => row.id == id);
+    if (items.length != before) notifyListeners();
+  }
+}
+
+class _CrmToastHost extends StatelessWidget {
+  const _CrmToastHost({required this.controller});
+
+  final _CrmToastController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final maxWidth = MediaQuery.sizeOf(context).width - 28;
+    final width = maxWidth < 380 ? maxWidth : 380.0;
+    return Positioned(
+      top: 14,
+      right: 14,
+      left: null,
+      bottom: null,
+      child: AnimatedBuilder(
+        animation: controller,
+        builder: (context, _) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            for (final item in controller.items)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: SizedBox(
+                  width: width,
+                  child: _CrmToastCard(item: item, onClose: () => controller.remove(item.id)),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CrmToastCard extends StatelessWidget {
+  const _CrmToastCard({required this.item, required this.onClose});
+
+  final _CrmToastItem item;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.crm;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final accent = switch (item.tone) {
+      CrmToastTone.success => const Color(0xFF16A46B),
+      CrmToastTone.error => p.danger,
+      CrmToastTone.info => p.primary,
+    };
+    final icon = switch (item.tone) {
+      CrmToastTone.success => Icons.check_circle_rounded,
+      CrmToastTone.error => Icons.error_outline_rounded,
+      CrmToastTone.info => Icons.info_outline_rounded,
+    };
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 190),
+      curve: Curves.easeOutCubic,
+      builder: (context, value, child) => Opacity(
+        opacity: value,
+        child: Transform.translate(offset: Offset(0, -12 * (1 - value)), child: child),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(10, 11, 8, 11),
+          decoration: BoxDecoration(
+            color: dark ? const Color(0xFF1F262C) : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: dark ? const Color(0xFF2C363F) : const Color(0xFFE2E8ED)),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withValues(alpha: dark ? 0.42 : 0.13), blurRadius: 24, offset: const Offset(0, 10)),
+            ],
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 3,
+                height: 22,
+                margin: const EdgeInsets.only(top: 1),
+                decoration: BoxDecoration(color: accent, borderRadius: BorderRadius.circular(3)),
+              ),
+              const SizedBox(width: 10),
+              Icon(icon, size: 17, color: accent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  item.message,
+                  style: TextStyle(fontSize: 13, height: 1.36, color: p.ink),
+                ),
+              ),
+              InkWell(
+                onTap: onClose,
+                customBorder: const CircleBorder(),
+                child: Padding(
+                  padding: const EdgeInsets.all(5),
+                  child: Icon(Icons.close_rounded, size: 15, color: p.inkSecondary),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

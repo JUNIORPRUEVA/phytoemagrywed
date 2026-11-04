@@ -243,6 +243,44 @@ describe('endpoints del repartidor', () => {
     );
   });
 
+  it('confirma una sola ganancia separada de custodia y conserva el snapshot al reintentar', async () => {
+    const policy = await call('courier-compensation', { company_id: 'phytoemagry', policy: {
+      active: true, base_model: 'FIXED', fixed_fee_cents: 10000, product_sale_percent: 0,
+    } });
+    expect(policy.status).toBe(200);
+    const { token, orderId } = await prepare();
+    const base = `/api/courier/orders/${orderId}`;
+    const offered = await courier(base, { token });
+    expect(offered.data.order.courier_compensation.total_cents).toBe(10000);
+    await courier(`${base}/accept`, { token, method: 'POST', body: {} });
+    await courier(`${base}/start`, { token, method: 'POST', body: {} });
+    await courier(`${base}/arrive`, { token, method: 'POST', body: {} });
+    const code = (await call(`orders/${orderId}/delivery-code`, {})).data.code;
+    const probe = await courier(`${base}/deliver`, { token, method: 'POST', body: { proofCode: code } });
+    const body = { proofCode: code, cashReceivedCents: probe.data.expected_cents,
+      idempotencyKey: `deliver-earning-${orderId}` };
+    const first = await courier(`${base}/deliver`, { token, method: 'POST', body });
+    expect(first.data.state).toBe('DELIVERED');
+    const again = await courier(`${base}/deliver`, { token, method: 'POST', body });
+    expect(again.data.duplicate).toBe(true);
+    const earnings = await app.ctx.db.list('courier_earnings', { limit: 20 });
+    expect(earnings.filter((row) => row.order_id === orderId)).toHaveLength(1);
+    expect(earnings[0].amount_cents).toBe(10000);
+    const cash = await app.ctx.db.list('delivery_cash_ledger', { limit: 20 });
+    expect(cash.filter((row) => row.order_id === orderId && row.kind === 'charge')).toHaveLength(1);
+    const account = (await app.ctx.db.list('courier_accounts', { limit: 20 })).find((row) => row.phone_e164 === PHONE);
+    const initiated = await call('courier-payouts', { company_id: 'phytoemagry',
+      courier_account_id: account.id, method: 'transfer', idempotencyKey: 'payment-test-001',
+      allocations: [{ earning_id: earnings[0].id, amount_cents: 10000 }] });
+    expect(initiated.status).toBe(201);
+    expect(initiated.data.payout.state).toBe('initiated');
+    const paid = await call(`courier-payouts/${initiated.data.payout.id}/settle`, {
+      company_id: 'phytoemagry', reference: 'TRANSFERENCIA-UAT-001', idempotencyKey: 'settle-test-001' });
+    expect(paid.status).toBe(200);
+    const ledger = await call('courier-earnings?companyId=phytoemagry');
+    expect(ledger.data.rows.find((row) => row.id === earnings[0].id).paid_cents).toBe(10000);
+  });
+
   it('iniciar y llegar encolan los DOS avisos, sin declararlos enviados', async () => {
     const { token, orderId } = await prepare();
     const base = `/api/courier/orders/${orderId}`;
@@ -280,6 +318,70 @@ describe('endpoints del repartidor', () => {
 
     const events = await app.ctx.db.list('delivery_events', { limit: 50 });
     expect(events.filter((row) => row.event === 'accept')).toHaveLength(1);
+  });
+
+  it('dos aceptaciones simultáneas solo registran una transición', async () => {
+    const { token, orderId } = await prepare();
+    const route = `/api/courier/orders/${orderId}/accept`;
+    const [first, second] = await Promise.all([
+      courier(route, { token, method: 'POST', body: { idempotencyKey: 'accept-race-1' } }),
+      courier(route, { token, method: 'POST', body: { idempotencyKey: 'accept-race-2' } }),
+    ]);
+    expect([first.status, second.status].sort()).toEqual([200, 409]);
+    const events = await app.ctx.db.list('delivery_events', { limit: 50 });
+    expect(events.filter((row) => row.order_id === orderId && row.event === 'accept')).toHaveLength(1);
+    const order = await storedOrder(orderId);
+    expect(order.delivery.lifecycle).toBe('ACCEPTED');
+  });
+
+  it('dos instancias sobre la misma base solo aceptan una vez', async () => {
+    const { token, orderId } = await prepare();
+    const peer = await startCrmServer({
+      port: 0, host: '127.0.0.1', dataFile: path.join(dir, 'lifecycle.sqlite'),
+      token: TOKEN, quiet: true, schedulerEnabled: false,
+    });
+    try {
+      const route = `/api/courier/orders/${orderId}/accept`;
+      const peerRequest = fetch(`${peer.url}${route}`, {
+        method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ idempotencyKey: 'accept-peer' }),
+      });
+      const [first, second] = await Promise.all([
+        courier(route, { token, method: 'POST', body: { idempotencyKey: 'accept-primary' } }),
+        peerRequest.then(async (response) => ({ status: response.status, data: await response.json() })),
+      ]);
+      expect([first.status, second.status].sort()).toEqual([200, 409]);
+      const events = await app.ctx.db.list('delivery_events', { limit: 50 });
+      expect(events.filter((row) => row.order_id === orderId && row.event === 'accept')).toHaveLength(1);
+    } finally {
+      await peer.close();
+    }
+  });
+
+  it('una desconexión explícita impide aceptar, pero al volver en línea puede aceptar', async () => {
+    const { token, orderId } = await prepare();
+    const availability = '/api/courier/availability';
+    expect((await courier(availability, { token, method: 'POST', body: { available: false } })).status).toBe(200);
+    const route = `/api/courier/orders/${orderId}/accept`;
+    const blocked = await courier(route, { token, method: 'POST', body: {} });
+    expect(blocked.status).toBe(409);
+    expect(blocked.data.error).toBe('courier_unavailable');
+    expect((await courier(availability, { token, method: 'POST', body: { available: true } })).status).toBe(200);
+    expect((await courier(route, { token, method: 'POST', body: {} })).status).toBe(200);
+  });
+
+  it('una clave reutilizada en otro pedido no se interpreta como éxito', async () => {
+    const first = await prepare();
+    const second = await prepare();
+    const key = 'accept-used-elsewhere';
+    expect((await courier(`/api/courier/orders/${first.orderId}/accept`, {
+      token: first.token, method: 'POST', body: { idempotencyKey: key },
+    })).status).toBe(200);
+    const reused = await courier(`/api/courier/orders/${second.orderId}/accept`, {
+      token: second.token, method: 'POST', body: { idempotencyKey: key },
+    });
+    expect(reused.status).toBe(409);
+    expect(reused.data.error).toBe('idempotency_key_reused');
   });
 
   it('una versión vieja no pisa el trabajo', async () => {

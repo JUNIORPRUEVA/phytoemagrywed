@@ -36,6 +36,7 @@ import { toE164 } from './whatsapp.mjs';
 import { orderDestination } from './delivery-tracking.mjs';
 import { DELIVERY_STATES, DEFAULT_OFFER_TTL_MS, nextOfferExpiry } from './delivery-lifecycle.mjs';
 import { authorizedCourierAccount, companyOfOrder } from './logistics-tenancy.mjs';
+import { compensationAtAssignment } from './courier-compensation-state.mjs';
 
 const OFFER_TTL_MS = Math.max(
   60_000,
@@ -202,6 +203,9 @@ export async function assignCourier(input) {
     return { ok: false, status: 403, error: 'courier_company_forbidden',
       message: 'El repartidor no está autorizado para esta empresa.' };
   }
+  const compensation = await compensationAtAssignment(ctx.db, order, ctx.clock());
+  if (!compensation.ok) return { ok: false, status: compensation.status, error: compensation.error,
+    message: 'Configura la remuneración y la ruta antes de asignar el pedido.' };
 
   const customer = order.customer_id ? await ctx.customers.get(order.customer_id) : null;
   if (customer?.phone_e164 && customer.phone_e164 === contact.phone) {
@@ -215,6 +219,7 @@ export async function assignCourier(input) {
     ...order,
     delivery: {
       ...(order.delivery ?? {}),
+      courier_compensation_snapshot: compensation.snapshot,
       /*
        * UN PEDIDO TIENE UN SOLO REPARTIDOR VIGENTE.
        * Al pasar a un mensajero externo, el repartidor interno anterior deja de

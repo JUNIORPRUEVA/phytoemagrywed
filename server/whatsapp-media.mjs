@@ -227,6 +227,13 @@ export function createWhatsAppMedia(options = {}) {
       return this.sendMessage(to, { type: 'audio', audio: link ? { link } : { id: mediaId } });
     },
 
+    /** Envía un video ya subido, con pie opcional. */
+    async sendVideo(to, { mediaId, link = null, caption = null }) {
+      const video = link ? { link } : { id: mediaId };
+      if (caption) video.caption = String(caption).slice(0, 1024);
+      return this.sendMessage(to, { type: 'video', video });
+    },
+
     /**
      * Envía un DOCUMENTO (un PDF, por ejemplo) como documento NATIVO de WhatsApp:
      * el cliente lo ve como un archivo descargable con su nombre, no como un enlace.

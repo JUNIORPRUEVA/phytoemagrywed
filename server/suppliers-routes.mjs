@@ -17,6 +17,8 @@ import {
   supplierKey,
   syncOrderPickups,
 } from './suppliers.mjs';
+import { activeLogisticsCompany, adminCompanyScope, companyOfOrder, courierCompanies, scopeSeesCompany, validCompanyId } from './logistics-tenancy.mjs';
+import { storeOfProduct } from './store-catalog.mjs';
 
 const ID = '[a-zA-Z0-9_.:%-]+';
 
@@ -30,7 +32,7 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
    * entrada tiene que incluirlas o el manejador no se ejecuta nunca.
    */
   const esRuta =
-    /^\/api\/admin\/(suppliers|pickups|supplier-invoices|quick-sales)\b/.test(route) ||
+    /^\/api\/admin\/(suppliers|product-suppliers|pickups|supplier-invoices|quick-sales)\b/.test(route) ||
     /^\/api\/admin\/products\//.test(route) ||
     /^\/api\/admin\/orders\/[^/]+\/pickups$/.test(route);
   if (!esRuta) return false;
@@ -53,6 +55,38 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
   const db = ctx.db;
   const clock = ctx.clock ?? (() => new Date());
   const isAdmin = actor?.role === 'ADMIN';
+  // El permiso de reparto solo da acceso a las recogidas del pedido asignado.
+  // La ficha general de una tienda contiene teléfono y otros datos privados.
+  if ((actor?.role === 'DELIVERY' || (canDeliverOwn && !canReadOrders)) && !isAdmin &&
+      (/^\/api\/admin\/suppliers(?:\/|$)/.test(route) ||
+       route === '/api/admin/product-suppliers' ||
+       /^\/api\/admin\/products\//.test(route) ||
+       route === '/api/admin/pickups' || route === '/api/admin/quick-sales')) {
+    return send(403, { ok: false, error: 'forbidden' });
+  }
+  const companyScope = actor?.role === 'DELIVERY'
+    ? new Set(await (async () => {
+        const accounts = await db.list('courier_accounts', { limit: 5000 });
+        const account = accounts.find((row) => row.user_id === actor?.id && row.active !== false && row.app_access === true);
+        return account ? courierCompanies(db, account) : [];
+      })())
+    : await adminCompanyScope(db, actor, can);
+  const seesCompany = (companyId) => Boolean(companyId) && scopeSeesCompany(companyScope, companyId);
+  const requestedCompany = new URL(req.url ?? route, 'http://local').searchParams.get('companyId');
+  const selectCompany = async (value) => {
+    const chosen = String(value ?? requestedCompany ?? '').trim() ||
+      (companyScope instanceof Set && companyScope.size === 1 ? [...companyScope][0] : '');
+    if (!validCompanyId(chosen) || !(await activeLogisticsCompany(db, chosen))) {
+      return { ok: false, status: 422, error: 'company_required' };
+    }
+    if (!seesCompany(chosen)) return { ok: false, status: 403, error: 'company_forbidden' };
+    return { ok: true, companyId: chosen };
+  };
+  const supplierForActor = async (id) => {
+    const row = await db.get('suppliers', id);
+    return row && seesCompany(row.company_id) ? row : null;
+  };
+  const supplierView = (row) => isAdmin ? row : (({ phone, whatsapp, responsible, ...publicRow }) => publicRow)(row);
 
   /** El pedido REAL y si este usuario es quien lo lleva. */
   const orderForActor = async (orderId) => {
@@ -67,6 +101,7 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
       order = null;
     }
     if (!order) return null;
+    if (!seesCompany(companyOfOrder(order))) return null;
     order.id = order.id ?? orderId;
     return { row, order, mine: String(order?.delivery?.delivery_user_id ?? '') === String(actor?.id ?? '') };
   };
@@ -76,12 +111,71 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
     isAdmin ? rows : rows.map(({ cost_cents, paid, paid_at, paid_by, ...rest }) => rest);
 
   const supplierMatch = new RegExp(`^/api/admin/suppliers/(${ID})$`).exec(route);
+  const assignSupplierMatch = new RegExp(`^/api/admin/suppliers/(${ID})/assign-company$`).exec(route);
   const linkMatch = new RegExp(`^/api/admin/products/(${ID})/suppliers(?:/(${ID}))?$`).exec(route);
   const typeMatch = new RegExp(`^/api/admin/products/(${ID})/type$`).exec(route);
   const pickupListMatch = new RegExp(`^/api/admin/orders/(${ID})/pickups$`).exec(route);
   const pickupMatch = new RegExp(`^/api/admin/pickups/(${ID})$`).exec(route);
 
   try {
+    if (route === '/api/admin/suppliers/unassigned' && req.method === 'GET') {
+      if (!can('admin.full')) return send(403, { ok: false, error: 'forbidden' });
+      const suppliers = (await db.list('suppliers', { limit: 5000 }))
+        .filter((row) => !row.company_id)
+        .map((row) => ({ ...row, location_status: locationStatus(row) }));
+      return send(200, { ok: true, suppliers });
+    }
+
+    if (assignSupplierMatch && req.method === 'POST') {
+      if (!can('admin.full')) return send(403, { ok: false, error: 'forbidden' });
+      const id = assignSupplierMatch[1];
+      const supplier = await db.get('suppliers', id);
+      if (!supplier) return send(404, { ok: false, error: 'not_found' });
+      const body = await readJson(req, 8000);
+      const companyId = String(body.company_id ?? body.companyId ?? '').trim();
+      if (!validCompanyId(companyId) || !(await activeLogisticsCompany(db, companyId))) {
+        return send(422, { ok: false, error: 'invalid_company' });
+      }
+      if (supplier.company_id && supplier.company_id !== companyId) {
+        return send(409, { ok: false, error: 'company_immutable' });
+      }
+      const duplicate = (await db.list('suppliers', { limit: 5000 }))
+        .find((row) => row.id !== id && row.company_id === companyId && supplierKey(row) === supplierKey(supplier));
+      if (duplicate) return send(409, { ok: false, error: 'duplicate_supplier', supplier: supplierView(duplicate) });
+      const links = (await db.list('product_suppliers', { limit: 5000 }))
+        .filter((row) => row.supplier_id === id);
+      const products = await ctx.storeCatalog?.list();
+      if (links.some((link) => {
+        const product = products?.find((row) => row.id === link.product_id);
+        return !product || storeOfProduct(product) !== companyId ||
+          (link.company_id && link.company_id !== companyId);
+      })) return send(409, { ok: false, error: 'product_company_mismatch' });
+      const pickups = (await db.list('order_pickups', { limit: 5000 }))
+        .filter((row) => row.supplier_id === id);
+      for (const pickup of pickups) {
+        const orderRow = await ctx.store.getAdmin(pickup.order_id);
+        let order;
+        try { order = JSON.parse(orderRow?.order_json ?? orderRow?.orderJson ?? 'null'); }
+        catch { order = null; }
+        if (companyOfOrder(order) !== companyId) {
+          return send(409, { ok: false, error: 'pickup_company_mismatch' });
+        }
+      }
+      // Repetir la operación completa los vínculos si se interrumpió a mitad.
+      const updated = await db.update('suppliers', id, {
+        company_id: companyId, name_key: `${companyId}:${supplierKey(supplier)}`,
+        updated_at: clock().toISOString(),
+      });
+      for (const link of links) await db.update('product_suppliers', link.id, {
+        company_id: companyId,
+        link_key: `${companyId}:${link.product_id}:${id}`,
+        updated_at: clock().toISOString(),
+      });
+      for (const pickup of pickups) await db.update('order_pickups', pickup.id, {
+        company_id: companyId, updated_at: clock().toISOString(),
+      });
+      return send(200, { ok: true, supplier: updated, links: links.length, pickups: pickups.length });
+    }
     // ------------------------------------------- tipo comercial del producto
     if (typeMatch) {
       if (!isAdmin) return send(403, { ok: false, error: 'forbidden' });
@@ -93,30 +187,53 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
     }
     // ------------------------------------------------------------- tiendas
     if (route === '/api/admin/suppliers' && req.method === 'GET') {
-      const suppliers = (await db.list('suppliers', { by: 'name', order: 'asc' })).map((row) => ({
+      if (requestedCompany && (!validCompanyId(requestedCompany) || !seesCompany(requestedCompany))) {
+        return send(403, { ok: false, error: 'company_forbidden' });
+      }
+      const suppliers = (await db.list('suppliers', { by: 'name', order: 'asc' }))
+        .filter((row) => seesCompany(row.company_id) && (!requestedCompany || row.company_id === requestedCompany))
+        .map((row) => supplierView({
         ...row,
         location_status: locationStatus(row),
       }));
       return send(200, { ok: true, suppliers: sanitize ? sanitize(suppliers) : suppliers, canManage: isAdmin });
     }
 
+    if (route === '/api/admin/product-suppliers' && req.method === 'GET') {
+      if (requestedCompany && (!validCompanyId(requestedCompany) || !seesCompany(requestedCompany))) {
+        return send(403, { ok: false, error: 'company_forbidden' });
+      }
+      const suppliers = await db.list('suppliers', { limit: 5000 });
+      const activeIds = new Set(suppliers.filter((row) => row.active !== false && seesCompany(row.company_id))
+        .map((row) => row.id));
+      const links = (await db.list('product_suppliers', { limit: 5000 }))
+        .filter((row) => row.active !== false && activeIds.has(row.supplier_id) &&
+          seesCompany(row.company_id) && (!requestedCompany || row.company_id === requestedCompany))
+        .map((row) => isAdmin ? row : (({ cost_cents, notes, ...publicRow }) => publicRow)(row));
+      return send(200, { ok: true, links: sanitize ? sanitize(links) : links });
+    }
+
     if (route === '/api/admin/suppliers' && req.method === 'POST') {
       if (!isAdmin) return send(403, { ok: false, error: 'forbidden' });
-      const body = normalizeSupplier(await readJson(req, 40000));
+      const raw = await readJson(req, 40000);
+      const selected = await selectCompany(raw.company_id ?? raw.companyId);
+      if (!selected.ok) return send(selected.status, { ok: false, error: selected.error });
+      const body = normalizeSupplier(raw);
       const key = supplierKey(body);
       const all = await db.list('suppliers', { limit: 5000 });
-      const duplicate = all.find((row) => supplierKey(row) === key);
+      const duplicate = all.find((row) => row.company_id === selected.companyId && supplierKey(row) === key);
       if (duplicate) {
         return send(409, {
           ok: false,
           error: 'duplicate_supplier',
-          message: `Ya existe «${duplicate.name}» con ese teléfono.`,
-          supplier: duplicate,
+          message: `Ya existe «${duplicate.name}» en esa dirección.`,
+          supplier: supplierView(duplicate),
         });
       }
       const supplier = {
         ...body,
-        name_key: key,
+        company_id: selected.companyId,
+        name_key: `${selected.companyId}:${key}`,
         id: `sup_${clock().getTime().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
         created_at: clock().toISOString(),
         updated_at: clock().toISOString(),
@@ -128,38 +245,45 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
     if (supplierMatch) {
       const id = supplierMatch[1];
       if (req.method === 'GET') {
-        const supplier = await db.get('suppliers', id);
+        const supplier = await supplierForActor(id);
         if (!supplier) return send(404, { ok: false, error: 'not_found' });
-        const links = (await db.list('product_suppliers', { limit: 5000 })).filter((row) => row.supplier_id === id);
+        const links = (await db.list('product_suppliers', { limit: 5000 }))
+          .filter((row) => row.supplier_id === id && row.company_id === supplier.company_id)
+          .map((row) => isAdmin ? row : (({ cost_cents, notes, ...publicRow }) => publicRow)(row));
         return send(200, {
           ok: true,
-          supplier: { ...supplier, location_status: locationStatus(supplier) },
+          supplier: supplierView({ ...supplier, location_status: locationStatus(supplier) }),
           links: sanitize ? sanitize(links) : links,
         });
       }
       if (!isAdmin) return send(403, { ok: false, error: 'forbidden' });
       if (req.method === 'DELETE') {
-        const removed = await db.remove('suppliers', id);
-        if (!removed) return send(404, { ok: false, error: 'not_found' });
-        return send(200, { ok: true });
+        const current = await supplierForActor(id);
+        if (!current) return send(404, { ok: false, error: 'not_found' });
+        const supplier = await db.update('suppliers', id, { active: false, updated_at: clock().toISOString() });
+        return send(200, { ok: true, supplier });
       }
       if (req.method !== 'PATCH') return send(405, { ok: false, error: 'method_not_allowed' });
-      const current = await db.get('suppliers', id);
+      const current = await supplierForActor(id);
       if (!current) return send(404, { ok: false, error: 'not_found' });
-      const body = normalizeSupplier({ ...current, ...(await readJson(req, 40000)) });
+      const raw = await readJson(req, 40000);
+      if ((raw.company_id ?? raw.companyId) && (raw.company_id ?? raw.companyId) !== current.company_id) {
+        return send(409, { ok: false, error: 'company_immutable' });
+      }
+      const body = normalizeSupplier({ ...current, ...raw });
       const key = supplierKey(body);
       const all = await db.list('suppliers', { limit: 5000 });
-      const duplicate = all.find((row) => row.id !== id && supplierKey(row) === key);
+      const duplicate = all.find((row) => row.id !== id && row.company_id === current.company_id && supplierKey(row) === key);
       if (duplicate) {
         return send(409, {
           ok: false,
           error: 'duplicate_supplier',
-          message: `Ya existe «${duplicate.name}» con ese teléfono.`,
+          message: `Ya existe «${duplicate.name}» en esa dirección.`,
         });
       }
       const supplier = await db.update('suppliers', id, {
         ...body,
-        name_key: key,
+        name_key: `${current.company_id}:${key}`,
         updated_at: clock().toISOString(),
       });
       return send(200, { ok: true, supplier: { ...supplier, location_status: locationStatus(supplier) } });
@@ -171,15 +295,16 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
       const supplierId = linkMatch[2];
       if (req.method === 'GET') {
         const links = (await db.list('product_suppliers', { limit: 5000 }))
-          .filter((row) => row.product_id === productId)
-          .map((row) => ({ ...row }));
+          .filter((row) => row.product_id === productId && seesCompany(row.company_id))
+          .map((row) => isAdmin ? row : (({ cost_cents, notes, ...publicRow }) => publicRow)(row));
         return send(200, { ok: true, links: sanitize ? sanitize(links) : links });
       }
       if (!isAdmin) return send(403, { ok: false, error: 'forbidden' });
       if (req.method === 'DELETE') {
         if (!supplierId) return send(400, { ok: false, error: 'missing_supplier' });
+        if (!(await supplierForActor(supplierId))) return send(404, { ok: false, error: 'not_found' });
         const all = await db.list('product_suppliers', { limit: 5000 });
-        const link = all.find((row) => row.product_id === productId && row.supplier_id === supplierId);
+        const link = all.find((row) => row.product_id === productId && row.supplier_id === supplierId && seesCompany(row.company_id));
         if (!link) return send(404, { ok: false, error: 'not_found' });
         await db.remove('product_suppliers', link.id);
         return send(200, { ok: true });
@@ -189,16 +314,21 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
         ...(await readJson(req, 40000)),
         ...(supplierId ? { supplier_id: supplierId } : {}),
       });
-      const supplier = await db.get('suppliers', body.supplier_id);
+      const supplier = await supplierForActor(body.supplier_id);
       if (!supplier) return send(422, { ok: false, error: 'unknown_supplier', message: 'Esa tienda no existe.' });
+      const product = (await ctx.storeCatalog?.list())?.find((row) => row.id === productId);
+      if (!product || storeOfProduct(product) !== supplier.company_id) {
+        return send(422, { ok: false, error: 'product_company_mismatch' });
+      }
       const all = await db.list('product_suppliers', { limit: 5000 });
-      const existing = all.find((row) => row.product_id === productId && row.supplier_id === body.supplier_id);
+      const existing = all.find((row) => row.product_id === productId && row.supplier_id === body.supplier_id && row.company_id === supplier.company_id);
       const doc = {
         ...body,
         id: existing?.id ?? `psup_${productId}_${body.supplier_id}`,
+        company_id: supplier.company_id,
         product_id: productId,
         supplier_name: supplier.name,
-        link_key: `${productId}:${body.supplier_id}`,
+        link_key: `${supplier.company_id}:${productId}:${body.supplier_id}`,
         created_at: existing?.created_at ?? clock().toISOString(),
         updated_at: clock().toISOString(),
       };
@@ -230,6 +360,7 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
         } catch {
           order = null;
         }
+        if (!seesCompany(companyOfOrder(order))) continue;
         for (const item of order?.items ?? []) {
           const manual = item.manual === true || item.product_type === 'quick_sale' || /^manual_/.test(String(item.variantId ?? ''));
           if (!manual) continue;
@@ -258,16 +389,22 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
        */
       const url = new URL(req.url ?? route, 'http://local');
       const status = limpiar(url.searchParams.get('status'), 40);
-      const rows = (await db.list('order_pickups', { limit: 5000 }))
-        .filter((row) => !status || row.status === status)
-        .sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')));
       let orderNumbers = new Map();
+      let visibleOrderIds = new Set();
       try {
         const orders = await ctx.store.listAdmin({ limit: 2000 });
-        orderNumbers = new Map(orders.map((row) => [row.id, row.order_number ?? null]));
+        const visible = orders.filter((row) => {
+          try { return seesCompany(companyOfOrder(JSON.parse(row.order_json ?? row.orderJson ?? 'null'))); }
+          catch { return false; }
+        });
+        visibleOrderIds = new Set(visible.map((row) => row.id));
+        orderNumbers = new Map(visible.map((row) => [row.id, row.order_number ?? null]));
       } catch {
         orderNumbers = new Map();
       }
+      const rows = (await db.list('order_pickups', { limit: 5000 }))
+        .filter((row) => visibleOrderIds.has(row.order_id) && (!status || row.status === status))
+        .sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')));
       return send(200, {
         ok: true,
         pickups: rows.map((row) => ({ ...row, order_number: orderNumbers.get(row.order_id) ?? null })),
@@ -284,6 +421,8 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
         if (req.method !== 'GET') return send(405, { ok: false, error: 'method_not_allowed' });
         const row = await db.get('supplier_invoices', decodeURIComponent(invoiceFileMatch[1]));
         if (!row || !row.data_base64) return send(404, { ok: false, error: 'not_found' });
+        const visibleOrder = await orderForActor(row.order_id);
+        if (!visibleOrder) return send(404, { ok: false, error: 'not_found' });
         if (!isAdmin) {
           const found = await orderForActor(row.order_id);
           if (!found || !found.mine) return send(403, { ok: false, error: 'forbidden' });
@@ -307,6 +446,7 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
         if (req.method === 'DELETE') {
           const current = await db.get('supplier_invoices', id);
           if (!current) return send(404, { ok: false, error: 'not_found' });
+          if (!(await orderForActor(current.order_id))) return send(404, { ok: false, error: 'not_found' });
           await db.remove('supplier_invoices', id);
           const pickups = await db.list('order_pickups', { limit: 5000 });
           for (const pickup of pickups) {
@@ -323,6 +463,7 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
         if (req.method !== 'GET') return send(405, { ok: false, error: 'method_not_allowed' });
         const row = await db.get('supplier_invoices', id);
         if (!row) return send(404, { ok: false, error: 'not_found' });
+        if (!(await orderForActor(row.order_id))) return send(404, { ok: false, error: 'not_found' });
         const { data_base64: _omit, ...meta } = row;
         return send(200, { ok: true, invoice: meta });
       }
@@ -330,12 +471,16 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
       if (req.method === 'GET') {
         const url = new URL(req.url ?? route, 'http://local');
         const orderId = limpiar(url.searchParams.get('order_id'), 80);
+        const orderRows = await ctx.store.listAdmin({ limit: 5000 });
+        const visibleOrderIds = new Set(orderRows.filter((row) => {
+          try { return seesCompany(companyOfOrder(JSON.parse(row.order_json ?? row.orderJson ?? 'null'))); }
+          catch { return false; }
+        }).map((row) => row.id));
         /* Sin administración, solo las facturas de pedidos propios. */
         let propias = null;
         if (!isAdmin) {
-          const rows = await ctx.store.listAdmin({ limit: 5000 });
           propias = new Set(
-            rows
+            orderRows
               .filter((row) => {
                 if (row.type && row.type !== 'order_intent') return false;
                 try {
@@ -351,6 +496,7 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
         const rows = (await db.list('supplier_invoices', { limit: 5000 }))
           .filter((row) => !orderId || row.order_id === orderId)
           .filter((row) => !propias || propias.has(row.order_id))
+          .filter((row) => visibleOrderIds.has(row.order_id))
           .sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))
           .map(({ data_base64: _omit, ...meta }) => meta);
         return send(200, { ok: true, invoices: rows, canManage: isAdmin });
@@ -359,6 +505,11 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
       if (req.method !== 'POST') return send(405, { ok: false, error: 'method_not_allowed' });
       const body = await readJson(req, 9_000_000);
       const invoice = normalizeSupplierInvoice(body);
+      const invoiceOrder = await orderForActor(invoice.order_id);
+      const invoiceSupplier = await supplierForActor(invoice.supplier_id);
+      if (!invoiceOrder || !invoiceSupplier || invoiceSupplier.company_id !== companyOfOrder(invoiceOrder.order)) {
+        return send(422, { ok: false, error: 'supplier_order_mismatch' });
+      }
       /*
        * FACTURA DESDE «MIS ENTREGAS».
        *
@@ -431,14 +582,16 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
       order.customer_id = order.customer_id ?? orderRow.customer_id ?? null;
       if (req.method === 'POST') {
         if (!isAdmin) return send(403, { ok: false, error: 'forbidden' });
-        const suppliers = await db.list('suppliers', { limit: 5000 });
+        const suppliers = (await db.list('suppliers', { limit: 5000 }))
+          .filter((row) => row.company_id === companyOfOrder(order));
         const created = await syncOrderPickups(db, { order, suppliers, clock });
         const pickups = (await db.list('order_pickups', { limit: 5000 })).filter((row) => row.order_id === orderId);
         return send(200, { ok: true, created: created.length, pickups: publicPickups(pickups) });
       }
       if (req.method !== 'GET') return send(405, { ok: false, error: 'method_not_allowed' });
       let stored = (await db.list('order_pickups', { limit: 5000 })).filter((row) => row.order_id === orderId);
-      const suppliersAll = await db.list('suppliers', { limit: 5000 });
+      const suppliersAll = (await db.list('suppliers', { limit: 5000 }))
+        .filter((row) => row.company_id === companyOfOrder(order));
       /*
        * SI AÚN NO HAY RECOGIDAS, SE CREAN AHORA (idempotente).
        *
@@ -480,6 +633,7 @@ export async function handleSupplierRoutes({ req, res, route, ctx, actor, json, 
       if (req.method !== 'PATCH') return send(405, { ok: false, error: 'method_not_allowed' });
       const current = await db.get('order_pickups', id);
       if (!current) return send(404, { ok: false, error: 'not_found' });
+      if (!(await orderForActor(current.order_id))) return send(404, { ok: false, error: 'not_found' });
       const body = await readJson(req, 20000);
       /*
        * EL REPARTIDOR MUEVE SU RECOGIDA, NO LA CAJA.

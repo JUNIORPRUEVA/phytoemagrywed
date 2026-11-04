@@ -22,6 +22,7 @@ import { ffmpegInfo } from '../server/audio-normalize.mjs';
 /** PNG mínimo válido (cabecera real) y un Ogg de mentira: el sniffing es lo que decide. */
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 7)]);
 const OGG = Buffer.concat([Buffer.from('OggS'), Buffer.alloc(64, 9)]);
+const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypisom'), Buffer.alloc(64, 1)]);
 
 /** Texto envenenado: si aparece en cualquier salida, hay una fuga de credenciales. */
 const VENENO =
@@ -215,6 +216,11 @@ function fakeGraph({ upload = {}, send = {}, ...rest } = {}) {
       if (typeof graph.sendResult === 'function') return graph.sendResult('audio');
       return { ok: true, waMessageId: 'wamid.SAL2', ...(graph.sendResult ?? {}) };
     },
+    async sendVideo() {
+      graph.sends += 1;
+      if (typeof graph.sendResult === 'function') return graph.sendResult('video');
+      return { ok: true, waMessageId: 'wamid.VIDEO', ...(graph.sendResult ?? {}) };
+    },
   };
   return graph;
 }
@@ -284,6 +290,15 @@ describe('servicio de media de Meta (Graph)', () => {
     expect(JSON.parse(fetchImpl.calls[1].init.body).audio).toEqual({ id: 'M2' });
   });
 
+  it('envía video nativo con caption', async () => {
+    const fetchImpl = fetchOk([{ json: { messages: [{ id: 'wamid.VID' }] } }]);
+    const service = createWhatsAppMedia({ accessToken: 't', phoneNumberId: 'PN', fetchImpl });
+    const result = await service.sendVideo('18095551234', { mediaId: 'M3', caption: 'Demostración' });
+    expect(result).toMatchObject({ ok: true, waMessageId: 'wamid.VID' });
+    const body = JSON.parse(fetchImpl.calls[0].init.body);
+    expect(body.video).toEqual({ id: 'M3', caption: 'Demostración' });
+  });
+
   it('traduce 401/403/404/500 a un error corto y sin secretos', async () => {
     for (const status of [401, 403, 404, 500]) {
       const fetchImpl = fetchOk([{ status, json: { error: { code: status, message: 'detalle interno de Meta con token t' } } }]);
@@ -337,6 +352,15 @@ describe('pipeline entrante', () => {
     expect(result.ok).toBe(true);
     expect(result.media.media_type).toBe('voice');
     expect(result.media.duration_ms).toBe(12000);
+  });
+
+  it('video entrante: conserva el tipo y los bytes reproducibles', async () => {
+    const storage = fakeStorage();
+    const pipeline = createMediaPipeline({ mediaStore: fakeMediaStore(), storage, whatsappMedia: graphOk(MP4, 'video/mp4') });
+    const result = await pipeline.processInbound({ messageId: 'msg_video', conversationId: 'cnv_1', media: { kind: 'video', waMediaId: 'MID_VIDEO' } });
+    expect(result).toMatchObject({ ok: true, status: MEDIA_STATUS.STORED });
+    expect(result.media.media_type).toBe('video');
+    expect(storage.buffers[0].contentType).toBe('video/mp4');
   });
 
   it('si Graph falla, queda FAILED y NO se toca el almacén (el mensaje sigue)', async () => {
@@ -412,6 +436,9 @@ describe('validación de archivos', () => {
     expect(validateBinary(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'))).toMatchObject({ ok: false });
     expect(validateBinary(PNG)).toMatchObject({ ok: true, mimeType: 'image/png' });
     expect(validateBinary(OGG)).toMatchObject({ ok: true, mimeType: 'audio/ogg' });
+    expect(validateBinary(MP4, { expect: 'video' })).toMatchObject({ ok: true, mimeType: 'video/mp4' });
+    expect(validateBinary(MP4, { expect: 'audio' })).toMatchObject({ ok: false, code: 'wrong_kind' });
+    expect(validateBinary(Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypheic'), Buffer.alloc(64)]))).toMatchObject({ ok: false, code: 'unrecognized_type' });
     expect(validateBinary(Buffer.concat([PNG, Buffer.alloc(6 * 1024 * 1024)]))).toMatchObject({ ok: false, code: 'too_large' });
     expect(validateBinary(PNG, { expect: 'audio' })).toMatchObject({ ok: false, code: 'wrong_kind' });
   });
@@ -439,6 +466,15 @@ describe('pipeline saliente', () => {
     const pipeline = createMediaPipeline({ mediaStore: fakeMediaStore(), storage: fakeStorage(), whatsappMedia: fakeGraph() });
     const result = await pipeline.processOutbound({ direction: 'audio', to: '18095551234', buffer: OGG, conversationId: 'cnv_1', messageId: 'msg_o2' });
     expect(result).toMatchObject({ ok: true, waMessageId: 'wamid.SAL2', mediaType: 'audio' });
+  });
+
+  it('video: guarda y envía con el tipo correcto', async () => {
+    const graph = fakeGraph();
+    const pipeline = createMediaPipeline({ mediaStore: fakeMediaStore(), storage: fakeStorage(), whatsappMedia: graph });
+    const result = await pipeline.processOutbound({ direction: 'video', to: '18095551234', buffer: MP4, conversationId: 'cnv_1', filename: 'clip.mp4' });
+    expect(result).toMatchObject({ ok: true, mediaType: 'video', waMessageId: 'wamid.VIDEO' });
+    expect(graph.lastUpload.mimeType).toBe('video/mp4');
+    expect(graph.sends).toBe(1);
   });
 
   it('si R2 falla NO se envía nada, no se contacta con Meta y se guarda el fallo estructurado', async () => {

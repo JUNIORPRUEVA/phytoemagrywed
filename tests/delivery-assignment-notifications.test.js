@@ -420,7 +420,7 @@ describe('delivery assignment notifications and contact flow', () => {
     advance(2);
     tick = await app.scheduler.tick();
     expect(tick.supervisor.reminders).toBeGreaterThanOrEqual(1);
-    expect(mockWhatsApp.sent.some((row) => row.to === '+18291111111')).toBe(true);
+    expect(mockWhatsApp.sent.some((row) => row.to === '+18292222222')).toBe(true);
     /* La plantilla del motor viejo ya no se usa. */
     expect(mockWhatsApp.sent.filter((row) => row.template?.name === 'phyto_delivery_pedido_pendiente_v1')).toHaveLength(0);
     const afterReminder = mockWhatsApp.sent.length;
@@ -464,14 +464,14 @@ describe('delivery assignment notifications and contact flow', () => {
     advance(5);
     const tickNew = await app.scheduler.tick();
     expect(tickNew.supervisor.reminders).toBeGreaterThanOrEqual(1);
-    expect(mockWhatsApp.sent.some((row) => row.to === '+18293333333')).toBe(true);
+    expect(mockWhatsApp.sent.some((row) => row.to === '+18294444444')).toBe(true);
     /*
      * Al repartidor ANTERIOR no le llega nada de ESTE pedido. (Desde que el
      * supervisor escribe también a los repartidores del CRM puede tener avisos
      * de otros pedidos suyos: se comprueba por número de pedido, no por número
      * de teléfono.)
      */
-    const delPedidoViejo = mockWhatsApp.sent.some((row) => row.to === '+18291111111' && JSON.stringify(row).includes(numero));
+    const delPedidoViejo = mockWhatsApp.sent.some((row) => row.to === '+18292222222' && JSON.stringify(row).includes(numero));
     expect(delPedidoViejo).toBe(false);
   });
 

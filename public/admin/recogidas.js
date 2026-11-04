@@ -35,6 +35,7 @@ const state = {
   suppliers: [],
   invoices: [],
   quickSales: [],
+  companies: [],
   manage: false,
   loading: false,
   error: '',
@@ -120,8 +121,12 @@ async function loadSuppliers() {
   state.loading = true;
   state.error = '';
   try {
-    const result = await api('/api/admin/suppliers');
+    const [result, companies] = await Promise.all([
+      api('/api/admin/suppliers'),
+      api('/api/admin/logistics/companies').catch(() => ({ companies: [] })),
+    ]);
     state.suppliers = result.suppliers ?? [];
+    state.companies = (companies.companies ?? []).filter((row) => row.active !== false);
     state.manage = state.manage || Boolean(result.canManage);
   } catch (error) {
     state.error = error.message;
@@ -441,10 +446,24 @@ function openSupplierForm(store = null) {
   dialog.innerHTML = `
     <form class="rc-form" method="dialog">
       <h2>${store ? 'Editar tienda' : 'Nueva tienda'}</h2>
+      ${store ? `<p class="rc-muted">Empresa: ${esc(state.companies.find((row) => row.id === store.company_id)?.name ?? store.company_id ?? 'Sin asignar')}</p>` : `
+      <label class="field"><span class="field__label">Empresa</span>
+        <select class="field__input" name="company_id" required>
+          <option value="">Selecciona una empresa</option>
+          ${state.companies.map((row) => `<option value="${esc(row.id)}">${esc(row.name ?? row.id)}</option>`).join('')}
+        </select></label>`}
       <label class="field"><span class="field__label">Nombre</span>
         <input class="field__input" name="name" required maxlength="120" value="${esc(store?.name ?? '')}"></label>
+      <label class="field"><span class="field__label">Tipo de punto</span>
+        <select class="field__input" name="type">
+          ${[['store', 'Tienda'], ['supplier', 'Proveedor'], ['warehouse', 'Almacén'], ['other', 'Otro']].map(([value, label]) => `<option value="${value}"${(store?.type ?? 'store') === value ? ' selected' : ''}>${label}</option>`).join('')}
+        </select></label>
       <label class="field"><span class="field__label">Teléfono</span>
         <input class="field__input" name="phone" maxlength="40" value="${esc(store?.phone ?? '')}"></label>
+      <label class="field"><span class="field__label">WhatsApp de contacto</span>
+        <input class="field__input" name="whatsapp" maxlength="40" value="${esc(store?.whatsapp ?? '')}"></label>
+      <label class="field"><span class="field__label">Persona responsable</span>
+        <input class="field__input" name="responsible" maxlength="120" value="${esc(store?.responsible ?? '')}"></label>
       <label class="field"><span class="field__label">Dirección</span>
         <input class="field__input" name="address" maxlength="200" value="${esc(store?.address ?? '')}"></label>
       <div class="rc-form__row">
@@ -457,6 +476,8 @@ function openSupplierForm(store = null) {
         <input class="field__input" name="maps_url" maxlength="500" value="${esc(store?.maps_url ?? '')}"></label>
       <label class="field"><span class="field__label">Referencias</span>
         <input class="field__input" name="references" maxlength="300" value="${esc(store?.references ?? '')}"></label>
+      <label class="field"><span class="field__label">Instrucciones para la recogida</span>
+        <input class="field__input" name="pickup_instructions" maxlength="500" value="${esc(store?.pickup_instructions ?? '')}"></label>
       <label class="field"><span class="field__label">Horario</span>
         <input class="field__input" name="hours" maxlength="160" value="${esc(store?.hours ?? '')}"></label>
       <p class="rc-error" role="alert"></p>
@@ -493,13 +514,18 @@ function openSupplierForm(store = null) {
     event.preventDefault();
     errorBox.textContent = '';
     const body = {
+      ...(!store ? { company_id: form.elements.namedItem('company_id')?.value ?? '' } : {}),
       name: form.name.value,
+      type: form.elements.namedItem('type').value,
       phone: form.phone.value,
+      whatsapp: form.elements.namedItem('whatsapp').value,
+      responsible: form.elements.namedItem('responsible').value,
       address: form.address.value,
       lat: form.lat.value === '' ? null : Number(form.lat.value),
       lng: form.lng.value === '' ? null : Number(form.lng.value),
       maps_url: form.maps_url.value,
       references: form.references.value,
+      pickup_instructions: form.elements.namedItem('pickup_instructions').value,
       hours: form.hours.value,
     };
     try {
