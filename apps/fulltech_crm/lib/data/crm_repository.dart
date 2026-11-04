@@ -573,12 +573,16 @@ class CrmRepository {
     double? deliveryFee,
     String? notes,
     String? deliveryLocationId,
+    String? paymentMethod,
+    Map<String, dynamic>? delivery,
     String? operationKey,
   }) => _api.patch('/api/admin/orders/${Uri.encodeComponent(id)}', {
     'items': ?items,
     'discount': ?discount,
     'deliveryFee': ?deliveryFee,
     'notes': ?notes,
+    'paymentMethod': ?paymentMethod,
+    'delivery': ?delivery,
     if (deliveryLocationId != null)
       'deliveryLocation': {'id': deliveryLocationId},
   }, operationKey: operationKey);

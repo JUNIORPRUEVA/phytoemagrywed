@@ -51,7 +51,10 @@ tamaño de ventana.
   asistente contextual. No envía nada solo.
 - **Derecha, 30 %** — Acciones: crear pedido, enviar plantilla, datos de pago/ubicación,
   asignación, finalizar/reabrir, recargar y conciliar un envío.
-- **Derecha, ancho fijo 320–360 px** — Acciones rápidas (icono de la barra de escritura):
+- **Derecha, 30 %** — Acciones rápidas (icono de la barra de escritura):
   respuestas de siempre (se escriben en el compositor) y datos para compartir (página web,
-  tienda, ubicación, cuentas, catálogos). **Empuja** el hilo, no lo tapa: la lista de chats queda
-  intacta y el compositor sigue visible. En móvil se abre como hoja desde abajo al 80 % del alto.
+  tienda, ubicación, cuentas, catálogos). Se superpone al hilo sin cambiar el ancho del chat;
+  se cierra con ✕ o tocando el velo. En móvil se abre como hoja desde abajo al 80 % del alto.
+- **Derecha, 30 %** — Pedidos muestra arriba un resumen desplazable y debajo un mapa interactivo
+  que ocupa el espacio restante. La casa marca el domicilio; si hay entrega activa, la posición
+  del repartidor se refresca mientras la columna permanece abierta.

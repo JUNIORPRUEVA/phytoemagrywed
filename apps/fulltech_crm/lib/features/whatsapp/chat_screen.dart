@@ -325,7 +325,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Conversation? get _conversation =>
       _state.conversationById(widget.conversationId);
 
-  void _openSale(String mode) {
+  void _openSale(String mode, {String orderId = ''}) {
     final customerId = _conversation?.customerId ?? '';
     if (customerId.isEmpty) {
       crmToast(context, 'Este chat todavía no tiene un cliente vinculado.');
@@ -335,15 +335,16 @@ class _ChatScreenState extends State<ChatScreen> {
       customerId: customerId,
       conversationId: widget.conversationId,
       mode: mode,
+      orderId: orderId,
     );
     setState(() => _optionsOpen = false);
     final open = widget.onOpenSale;
     if (open != null) {
       open(launch);
     } else {
-      Navigator.of(context).push(MaterialPageRoute<void>(
-        builder: (_) => PosScreen(initialSale: launch),
-      ));
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => PosScreen(initialSale: launch)),
+      );
     }
   }
 
@@ -1165,14 +1166,7 @@ class _ChatScreenState extends State<ChatScreen> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final panelWidth = (constraints.maxWidth * 0.30).clamp(280.0, 460.0);
-          /*
-           * ACCIONES RÁPIDAS: columna ANCLADA A LA DERECHA, con ancho fijo.
-           *
-           * Antes se dibujaba encima del hilo y tapaba los mensajes. Ahora
-           * EMPUJA el contenido: la lista de chats queda intacta, el hilo se
-           * encoge y el compositor sigue visible.
-           */
-          final quickWidth = constraints.maxWidth >= 1180 ? 360.0 : 320.0;
+          final quickWidth = (constraints.maxWidth * 0.30).clamp(280.0, 460.0);
           /*
            * Anchos de las columnas de pedidos y ficha: 30 % y 40 % del área del
            * chat, con un tope absoluto y otro RELATIVO (62 % / 80 %), para que en
@@ -1183,201 +1177,157 @@ class _ChatScreenState extends State<ChatScreen> {
             constraints.maxWidth * 0.62,
           );
           final profileWidth = math.min(
-            (constraints.maxWidth * 0.40).clamp(320.0, 640.0),
+            (constraints.maxWidth * 0.42).clamp(440.0, 680.0),
             constraints.maxWidth * 0.80,
           );
           return Stack(
             children: [
               Positioned.fill(
-                child: Row(
+                child: Column(
                   children: [
-                    /*
-                     * La columna del chat se envuelve en un detector de toques:
-                     * con un panel lateral abierto (acciones rápidas), tocar
-                     * FUERA de la columna la cierra, como un cajón. Con el panel
-                     * cerrado no intercepta nada: los botones y los mensajes
-                     * siguen funcionando igual.
-                     */
-                    Expanded(
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.translucent,
-                        onTap: _quickOpen
-                            ? () => setState(() => _quickOpen = false)
-                            : null,
-                        child: Column(
+                    ChatHeader(
+                      name: conversation?.name ?? widget.title,
+                      subtitle: subtitle,
+                      menu: _menuButton(conversation),
+                      aiEnabled: widget.aiEnabled,
+                      aiLoaded: widget.aiLoaded,
+                      aiBusy: widget.aiBusy,
+                      aiUnavailable: widget.aiUnavailable,
+                      onToggleAi: widget.onToggleAi,
+                      onSelectAiMode: widget.onSelectAiMode,
+                      aiMode: widget.aiMode,
+                      aiGlobalEnabled: widget.aiGlobalEnabled,
+                      aiTooltip: widget.aiTooltip,
+                      aiConversation: conversation,
+                      onOpenAiAssistant: _asistenteContextual,
+                      onNewMessage: widget.onNewMessage,
+                      onCall: phone.isEmpty
+                          ? null
+                          : () => launchUrl(Uri.parse('tel:$phone')),
+                      searching: _searching,
+                      searchController: _threadSearch,
+                      onSearchChanged: (value) =>
+                          setState(() => _threadQuery = value),
+                      onToggleSearch: () => setState(() {
+                        _searching = !_searching;
+                        if (!_searching) {
+                          _threadSearch.clear();
+                          _threadQuery = '';
+                        }
+                      }),
+                      onOrders: () => setState(() {
+                        _profileOpen = false;
+                        _quickOpen = false;
+                        _optionsOpen = false;
+                        _aiOpen = false;
+                        _ordersOpen = !_ordersOpen;
+                      }),
+                      onProfile: () => setState(() {
+                        _ordersOpen = false;
+                        _quickOpen = false;
+                        _optionsOpen = false;
+                        _aiOpen = false;
+                        _profileOpen = !_profileOpen;
+                      }),
+                    ),
+                    Expanded(child: body),
+                    if (_sugerencia != null && _aiSuggestion.isEmpty)
+                      ChatLiveSuggestion(
+                        review: _sugerencia!,
+                        accent: c.accent,
+                        background: c.dark
+                            ? const Color(0xFF1E3A31)
+                            : const Color(0xFFE8F5EF),
+                        foreground: c.dark
+                            ? const Color(0xFFBFE8D8)
+                            : const Color(0xFF0E3A2B),
+                        onApply: _aplicarSugerencia,
+                        onOpen: _proofread,
+                        onDismiss: _ignorarSugerencia,
+                      ),
+                    if (_aiSuggestion.isNotEmpty)
+                      ChatAiDraft(
+                        text: _aiSuggestion,
+                        title: _aiDraftTitle,
+                        onUse: _useAiSuggestion,
+                        onDiscard: _discardAiSuggestion,
+                      ),
+                    if (_aiBusy && !_aiOpen)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 5, 12, 5),
+                        child: Row(
                           children: [
-                            ChatHeader(
-                              name: conversation?.name ?? widget.title,
-                              subtitle: subtitle,
-                              menu: _menuButton(conversation),
-                              aiEnabled: widget.aiEnabled,
-                              aiLoaded: widget.aiLoaded,
-                              aiBusy: widget.aiBusy,
-                              aiUnavailable: widget.aiUnavailable,
-                              onToggleAi: widget.onToggleAi,
-                              onSelectAiMode: widget.onSelectAiMode,
-                              aiMode: widget.aiMode,
-                              aiGlobalEnabled: widget.aiGlobalEnabled,
-                              aiTooltip: widget.aiTooltip,
-                              aiConversation: conversation,
-                              onOpenAiAssistant: _asistenteContextual,
-                              onNewMessage: widget.onNewMessage,
-                              onCall: phone.isEmpty
-                                  ? null
-                                  : () => launchUrl(Uri.parse('tel:$phone')),
-                              searching: _searching,
-                              searchController: _threadSearch,
-                              onSearchChanged: (value) =>
-                                  setState(() => _threadQuery = value),
-                              onToggleSearch: () => setState(() {
-                                _searching = !_searching;
-                                if (!_searching) {
-                                  _threadSearch.clear();
-                                  _threadQuery = '';
-                                }
-                              }),
-                              onOrders: () => setState(() {
-                                _profileOpen = false;
-                                _quickOpen = false;
-                                _optionsOpen = false;
-                                _aiOpen = false;
-                                _ordersOpen = !_ordersOpen;
-                              }),
-                              onProfile: () => setState(() {
-                                _ordersOpen = false;
-                                _quickOpen = false;
-                                _optionsOpen = false;
-                                _aiOpen = false;
-                                _profileOpen = !_profileOpen;
-                              }),
+                            SizedBox(
+                              width: 13,
+                              height: 13,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: c.accent,
+                              ),
                             ),
-                            Expanded(child: body),
-                            if (_sugerencia != null && _aiSuggestion.isEmpty)
-                              ChatLiveSuggestion(
-                                review: _sugerencia!,
-                                accent: c.accent,
-                                background: c.dark
-                                    ? const Color(0xFF1E3A31)
-                                    : const Color(0xFFE8F5EF),
-                                foreground: c.dark
-                                    ? const Color(0xFFBFE8D8)
-                                    : const Color(0xFF0E3A2B),
-                                onApply: _aplicarSugerencia,
-                                onOpen: _proofread,
-                                onDismiss: _ignorarSugerencia,
+                            const SizedBox(width: 8),
+                            Text(
+                              'Preparando borrador…',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: c.textSecondary,
                               ),
-                            if (_aiSuggestion.isNotEmpty)
-                              ChatAiDraft(
-                                text: _aiSuggestion,
-                                title: _aiDraftTitle,
-                                onUse: _useAiSuggestion,
-                                onDiscard: _discardAiSuggestion,
-                              ),
-                            if (_aiBusy && !_aiOpen)
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  12,
-                                  5,
-                                  12,
-                                  5,
-                                ),
-                                child: Row(
-                                  children: [
-                                    SizedBox(
-                                      width: 13,
-                                      height: 13,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: c.accent,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      'Preparando borrador…',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: c.textSecondary,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            if (_aiError.isNotEmpty && !_aiOpen)
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  12,
-                                  5,
-                                  12,
-                                  5,
-                                ),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        _aiError,
-                                        softWrap: true,
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: c.danger,
-                                        ),
-                                      ),
-                                    ),
-                                    IconButton(
-                                      tooltip: 'Cerrar aviso',
-                                      onPressed: () =>
-                                          setState(() => _aiError = ''),
-                                      icon: Icon(
-                                        Icons.close_rounded,
-                                        size: 16,
-                                        color: c.textSecondary,
-                                      ),
-                                      visualDensity: VisualDensity.compact,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ChatComposer(
-                              controller: _composer,
-                              sending: _sending,
-                              uploadLabel: _uploadLabel,
-                              onSend: () => _send(),
-                              onAttach: (kind) => _pickAndSendMedia(kind),
-                              onShareLocation: () => _openShareSheet(),
-                              onRecord: () => _recordVoice(),
-                              onSendKey: _enviarConRevision,
-                              onProofread: _proofread,
-                              onReplySuggestion: _replySuggestion,
-                              onMoreAiTools: () => setState(() {
-                                _optionsOpen = false;
-                                _quickOpen = false;
-                                _ordersOpen = false;
-                                _profileOpen = false;
-                                _aiOpen = !_aiOpen;
-                              }),
-                              aiBusy: _aiBusy,
-                              onQuickActions: () => setState(() {
-                                _optionsOpen = false;
-                                _aiOpen = false;
-                                _ordersOpen = false;
-                                _profileOpen = false;
-                                _quickOpen = !_quickOpen;
-                              }),
                             ),
                           ],
                         ),
                       ),
-                    ),
-                    if (_quickOpen)
-                      ChatQuickPanel(
-                        width: quickWidth,
-                        onClose: () => setState(() => _quickOpen = false),
-                        onUseReply: _usarRespuestaRapida,
-                        onShareWeb: _compartirWeb,
-                        onShareStore: _compartirTienda,
-                        onShareData: () {
-                          _openShareSheet();
-                        },
+                    if (_aiError.isNotEmpty && !_aiOpen)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 5, 12, 5),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _aiError,
+                                softWrap: true,
+                                style: TextStyle(fontSize: 12, color: c.danger),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Cerrar aviso',
+                              onPressed: () => setState(() => _aiError = ''),
+                              icon: Icon(
+                                Icons.close_rounded,
+                                size: 16,
+                                color: c.textSecondary,
+                              ),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ],
+                        ),
                       ),
+                    ChatComposer(
+                      controller: _composer,
+                      sending: _sending,
+                      uploadLabel: _uploadLabel,
+                      onSend: () => _send(),
+                      onAttach: (kind) => _pickAndSendMedia(kind),
+                      onShareLocation: () => _openShareSheet(),
+                      onRecord: () => _recordVoice(),
+                      onSendKey: _enviarConRevision,
+                      onProofread: _proofread,
+                      onReplySuggestion: _replySuggestion,
+                      onMoreAiTools: () => setState(() {
+                        _optionsOpen = false;
+                        _quickOpen = false;
+                        _ordersOpen = false;
+                        _profileOpen = false;
+                        _aiOpen = !_aiOpen;
+                      }),
+                      aiBusy: _aiBusy,
+                      onQuickActions: () => setState(() {
+                        _optionsOpen = false;
+                        _aiOpen = false;
+                        _ordersOpen = false;
+                        _profileOpen = false;
+                        _quickOpen = !_quickOpen;
+                      }),
+                    ),
                   ],
                 ),
               ),
@@ -1397,6 +1347,34 @@ class _ChatScreenState extends State<ChatScreen> {
                   }),
                 ),
               ),
+              if (_quickOpen)
+                Positioned.fill(
+                  child: GestureDetector(
+                    onTap: () => setState(() => _quickOpen = false),
+                    child: BackdropFilter(
+                      filter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                      child: Container(
+                        color: c.dark
+                            ? const Color(0x55000000)
+                            : const Color(0x220B1D24),
+                      ),
+                    ),
+                  ),
+                ),
+              if (_quickOpen)
+                Positioned(
+                  top: 0,
+                  bottom: 0,
+                  right: 0,
+                  child: ChatQuickPanel(
+                    width: quickWidth,
+                    onClose: () => setState(() => _quickOpen = false),
+                    onUseReply: _usarRespuestaRapida,
+                    onShareWeb: _compartirWeb,
+                    onShareStore: _compartirTienda,
+                    onShareData: _openShareSheet,
+                  ),
+                ),
               // Columna de acciones: ENCIMA del hilo, con el fondo desenfocado.
               if (_optionsOpen)
                 Positioned.fill(
@@ -1504,15 +1482,29 @@ class _ChatScreenState extends State<ChatScreen> {
                            * El POS todavía no acepta abrir un pedido existente,
                            * así que se abre el módulo y el usuario lo busca ahí.
                            */
-                          onEditOrder: (_) => _openSale('order'),
+                          onEditOrder: (id) => _openSale('order', orderId: id),
                         ),
                 ),
-              // Herramientas ampliadas: flotan sobre los mensajes y dejan el editor libre.
+              // El asistente usa la misma capa superior que el resto de columnas.
+              if (_aiOpen)
+                Positioned.fill(
+                  child: GestureDetector(
+                    onTap: () => setState(() => _aiOpen = false),
+                    child: BackdropFilter(
+                      filter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                      child: Container(
+                        color: c.dark
+                            ? const Color(0x55000000)
+                            : const Color(0x220B1D24),
+                      ),
+                    ),
+                  ),
+                ),
               if (_aiOpen)
                 Positioned(
-                  top: 54,
-                  bottom: math.max(120, constraints.maxHeight * 0.18),
-                  right: 8,
+                  top: 0,
+                  bottom: 0,
+                  right: 0,
                   child: TweenAnimationBuilder<double>(
                     tween: Tween(begin: 0, end: 1),
                     duration: const Duration(milliseconds: 200),
@@ -1524,28 +1516,25 @@ class _ChatScreenState extends State<ChatScreen> {
                         child: child,
                       ),
                     ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: ChatAiPanel(
-                        width: panelWidth,
-                        onClose: () => setState(() => _aiOpen = false),
-                        busy: _aiBusy,
-                        suggestion: _aiSuggestion,
-                        error: _aiError,
-                        summary: _aiResumen,
-                        onProofread: () {
-                          setState(() => _aiOpen = false);
-                          _proofread();
-                        },
-                        onReplySuggestion: _replySuggestion,
-                        onAssistant: () {
-                          setState(() => _aiOpen = false);
-                          _asistenteContextual();
-                        },
-                        onSummary: _resumenCliente,
-                        onUseSuggestion: _useAiSuggestion,
-                        onDiscardSuggestion: _discardAiSuggestion,
-                      ),
+                    child: ChatAiPanel(
+                      width: panelWidth,
+                      onClose: () => setState(() => _aiOpen = false),
+                      busy: _aiBusy,
+                      suggestion: _aiSuggestion,
+                      error: _aiError,
+                      summary: _aiResumen,
+                      onProofread: () {
+                        setState(() => _aiOpen = false);
+                        _proofread();
+                      },
+                      onReplySuggestion: _replySuggestion,
+                      onAssistant: () {
+                        setState(() => _aiOpen = false);
+                        _asistenteContextual();
+                      },
+                      onSummary: _resumenCliente,
+                      onUseSuggestion: _useAiSuggestion,
+                      onDiscardSuggestion: _discardAiSuggestion,
                     ),
                   ),
                 ),

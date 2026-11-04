@@ -23,6 +23,7 @@ import '../pos_desktop/pos_line_editors.dart';
 import '../pos_desktop/pos_order_message_dialog.dart';
 import '../pos_desktop/pos_tickets_panel.dart';
 import 'pos_launch_context.dart';
+import 'pos_order_edit.dart';
 import '../pos_desktop/pos_category_rail.dart';
 import '../pos_desktop/pos_product_grid.dart';
 import '../pos_desktop/pos_recent_sales_panel.dart';
@@ -128,6 +129,9 @@ class _PosScreenState extends State<PosScreen>
 
   /// Cotización de origen (vacío = venta nueva).
   String _quoteId = '';
+  String _editingOrderId = '';
+  Map<String, dynamic> _editingOrder = const {};
+  bool _returnToChatAfterSuccess = false;
   bool _saving = false;
   bool _loadingQuotePdf = false;
   _PosDesktopPanel? _activePanel;
@@ -188,6 +192,22 @@ class _PosScreenState extends State<PosScreen>
       }
       setState(() => _customer = Customer.fromJson(row));
       await _loadOpenOrders(launch.customerId);
+      if (launch.orderId.isNotEmpty) {
+        await _loadExistingOrder(launch.orderId);
+        return;
+      }
+      if (launch.mode == 'order' && _openOrders.isNotEmpty) {
+        final choice = await _chooseOpenOrder();
+        if (!mounted) return;
+        if (choice == null) {
+          _returnToConversation();
+          return;
+        }
+        if (choice != 'new') {
+          await _loadExistingOrder(choice);
+          return;
+        }
+      }
       final rows = await repo.posTickets();
       if (!mounted) return;
       final tickets = rows.map(PosTicketSummary.fromJson).where((ticket) {
@@ -249,6 +269,124 @@ class _PosScreenState extends State<PosScreen>
       if (!mounted) return;
       if (choice is PosTicketSummary) await _resumeSavedTicket(choice);
       if (choice == 'new') await _createInitialTicket();
+    } on ApiException catch (error) {
+      if (mounted) posToast(context, error.message, tone: CrmToastTone.error);
+    }
+  }
+
+  Future<String?> _chooseOpenOrder() => showDialog<String>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Este cliente ya tiene un pedido abierto'),
+      content: SizedBox(
+        width: 440,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Puedes continuar uno existente o iniciar otro pedido.'),
+            const SizedBox(height: 10),
+            for (final order in _openOrders.take(6))
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.receipt_long_outlined),
+                title: Text(str(order['number'], str(order['id']))),
+                subtitle: Text(str(order['status'], 'Abierto')),
+                onTap: () => Navigator.pop(dialogContext, str(order['id'])),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('Volver al chat'),
+        ),
+        FilledButton.tonal(
+          onPressed: () => Navigator.pop(dialogContext, 'new'),
+          child: const Text('Crear uno nuevo'),
+        ),
+      ],
+    ),
+  );
+
+  void _returnToConversation() {
+    final navigate = widget.onNavigate;
+    if (navigate != null) {
+      navigate('whatsapp');
+    } else if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _loadExistingOrder(String orderId) async {
+    final repo = CrmScope.of(context, listen: false).repository;
+    try {
+      final response = await repo.order(orderId);
+      if (!mounted) return;
+      final order = mapv(response['order']);
+      if (order.isEmpty ||
+          str(
+                order['customer_id'],
+                str(mapv(response['item'])['customer_id']),
+              ) !=
+              _customer?.id) {
+        posToast(
+          context,
+          'El pedido no pertenece al cliente de este chat.',
+          tone: CrmToastTone.error,
+        );
+        return;
+      }
+      if (const [
+        'entregado',
+        'cancelado',
+        'perdido',
+      ].contains(str(order['status']).toLowerCase())) {
+        posToast(
+          context,
+          'Este pedido ya está cerrado y no se puede editar.',
+          tone: CrmToastTone.error,
+        );
+        return;
+      }
+      final lines = linesFromOrder(order);
+      if (lines.isEmpty) {
+        posToast(
+          context,
+          'El pedido no tiene artículos que editar.',
+          tone: CrmToastTone.error,
+        );
+        return;
+      }
+      final delivery = mapv(order['delivery']);
+      final location = mapv(delivery['location']);
+      setState(() {
+        _editingOrderId = orderId;
+        _editingOrder = order;
+        _mode = 'order';
+        _lines
+          ..clear()
+          ..addAll(lines);
+        _discountType = numv(order['discount']) > 0 ? 'amount' : 'none';
+        _discountValue = numv(order['discount']).toDouble();
+        _deliveryFee = numv(
+          order['delivery_fee'],
+          numv(delivery['fee']),
+        ).toDouble();
+        _deliveryMethod = str(delivery['method'], 'delivery');
+        _method = str(order['payment_method'], 'CASH');
+        _paid = str(order['payment_status']) == 'paid';
+        _address.text = str(delivery['address']);
+        _reference.text = str(delivery['reference']);
+        _notes.text = str(order['notes']);
+        _deliveryLocation = location.isEmpty ? null : location;
+        _deliveryLocationId = str(location['source_location_id']);
+        _selectedPickupStoreId = str(mapv(delivery['pickup'])['supplier_id']);
+        _ticketId = '';
+        _ticketVersion = 0;
+      });
+      _operation.reset();
     } on ApiException catch (error) {
       if (mounted) posToast(context, error.message, tone: CrmToastTone.error);
     }
@@ -527,6 +665,17 @@ class _PosScreenState extends State<PosScreen>
   void _removeLine(PosLine line) => setState(() => _lines.remove(line));
 
   Future<void> _confirmClear() async {
+    if (_editingOrderId.isNotEmpty) {
+      final leave = await crmConfirm(
+        context,
+        title: 'Cerrar edición',
+        message:
+            'Los cambios no guardados se perderán. El pedido seguirá intacto.',
+        confirmLabel: 'Volver al chat',
+      );
+      if (leave && mounted) _returnToConversation();
+      return;
+    }
     if (_lines.isEmpty && _ticketId.isEmpty) return;
     final confirmed = await crmConfirm(
       context,
@@ -961,7 +1110,11 @@ class _PosScreenState extends State<PosScreen>
                             onRemove: _removeLine,
                             onLineDiscount: _editLineDiscount,
                             onPickCustomer: _pickCustomer,
-                            openOrders: _openOrders,
+                            openOrders: _openOrders
+                                .where(
+                                  (row) => str(row['id']) != _editingOrderId,
+                                )
+                                .toList(),
                             loadingContext: _loadingContext,
                             contextError: _contextError,
                             onReloadContext: () {
@@ -971,20 +1124,43 @@ class _PosScreenState extends State<PosScreen>
                               }
                             },
                             onClear: _confirmClear,
-                            onModeChanged: (value) => setState(() {
-                              _mode = value;
-                              _paid = value == 'invoice';
-                            }),
+                            onModeChanged: (value) {
+                              if (_editingOrderId.isNotEmpty &&
+                                  value != 'order') {
+                                posToast(
+                                  context,
+                                  'Guarda o cierra la edición antes de cambiar de documento.',
+                                );
+                                return;
+                              }
+                              setState(() {
+                                _mode = value;
+                                _paid = value == 'invoice';
+                              });
+                            },
                             onMethodChanged: (value) =>
                                 setState(() => _method = value),
                             onPaidChanged: (value) =>
                                 setState(() => _paid = value),
                             onCheckout: _submit,
+                            checkoutLabel:
+                                widget.initialSale != null && _mode == 'order'
+                                ? 'Continuar'
+                                : null,
                             onOpenTickets: () => setState(
                               () => _activePanel = _PosDesktopPanel.recentSales,
                             ),
                             onAskCustomerData: _askCustomerData,
-                            onQuote: () => setState(() => _mode = 'quote'),
+                            onQuote: () {
+                              if (_editingOrderId.isNotEmpty) {
+                                posToast(
+                                  context,
+                                  'Guarda el pedido antes de crear una cotización.',
+                                );
+                              } else {
+                                setState(() => _mode = 'quote');
+                              }
+                            },
                             onLatestQuotePdf: _openLatestQuotePdf,
                             quotePdfLoading: _loadingQuotePdf,
                             canViewUtility: CrmScope.of(
@@ -1166,6 +1342,10 @@ class _PosScreenState extends State<PosScreen>
   /// Se conserva la clave de operación del borrador para no crear dos tickets
   /// si el operador pulsa dos veces.
   Future<bool> _parkTicket({bool notify = false}) async {
+    if (_editingOrderId.isNotEmpty) {
+      posToast(context, 'Guarda el pedido abierto antes de crear un ticket.');
+      return false;
+    }
     if (_lines.isEmpty) {
       posToast(
         context,
@@ -1230,6 +1410,13 @@ class _PosScreenState extends State<PosScreen>
 
   Future<void> _newTicket() async {
     if (_saving) return;
+    if (_editingOrderId.isNotEmpty) {
+      posToast(
+        context,
+        'Cierra la edición del pedido antes de abrir otro ticket.',
+      );
+      return;
+    }
     if (_lines.isNotEmpty && !await _parkTicket()) return;
     if (!mounted) return;
     setState(() {
@@ -1283,6 +1470,13 @@ class _PosScreenState extends State<PosScreen>
 
   Future<void> _resumeSavedTicket(PosTicketSummary ticket) async {
     if (!mounted || _saving || ticket.id == _ticketId) return;
+    if (_editingOrderId.isNotEmpty) {
+      posToast(
+        context,
+        'Cierra la edición del pedido antes de abrir otro ticket.',
+      );
+      return;
+    }
     if (_lines.isNotEmpty && !await _parkTicket()) return;
     if (!mounted) return;
     final resumed = resumeTicket(ticket, _catalogRows);
@@ -1333,7 +1527,14 @@ class _PosScreenState extends State<PosScreen>
               scrollDirection: Axis.horizontal,
               children: [
                 if (_ticketId.isEmpty)
-                  _ticketTab(p, _customer?.name ?? 'Ticket actual', true, null),
+                  _ticketTab(
+                    p,
+                    _editingOrderId.isEmpty
+                        ? (_customer?.name ?? 'Ticket actual')
+                        : str(_editingOrder['order_number'], 'Pedido abierto'),
+                    true,
+                    null,
+                  ),
                 for (var index = 0; index < visible.length; index++)
                   _ticketTab(
                     p,
@@ -1969,11 +2170,249 @@ class _PosScreenState extends State<PosScreen>
   }
 
   Future<void> _submit() async {
+    if (widget.initialSale == null || _mode != 'order') {
+      await _submitSale();
+      return;
+    }
+    final action = await _reviewOrder();
+    if (!mounted || action == null) return;
+    if (_editingOrderId.isNotEmpty) {
+      await _saveExistingOrder(returnToChat: action == 'chat');
+    } else if (action == 'draft') {
+      if (await _parkTicket(notify: true) && mounted) {
+        _returnToConversation();
+      }
+    } else {
+      _returnToChatAfterSuccess = action == 'chat';
+      await _submitSale();
+    }
+  }
+
+  Future<String?> _reviewOrder() async {
+    if (_lines.isEmpty) {
+      posToast(context, 'Agrega al menos un artículo.');
+      return null;
+    }
+    final fee = TextEditingController(text: _deliveryFee.toStringAsFixed(0));
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, update) => AlertDialog(
+          title: Text(
+            _editingOrderId.isEmpty
+                ? 'Revisar pedido'
+                : 'Editar ${str(_editingOrder['order_number'], 'pedido')}',
+          ),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${_customer?.name ?? 'Cliente'} · ${_lines.length} artículos',
+                  ),
+                  const SizedBox(height: 8),
+                  for (final line in _lines)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 3),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '${line.productName} × ${line.quantity}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Text(CrmFormat.money(line.netCents / 100)),
+                        ],
+                      ),
+                    ),
+                  const Divider(),
+                  Text(
+                    'Productos: ${CrmFormat.money(_draft.subtotalCents / 100)}',
+                  ),
+                  if (_draft.discountCents > 0)
+                    Text(
+                      'Descuento: −${CrmFormat.money(_draft.discountCents / 100)}',
+                    ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: _deliveryMethod == 'pickup'
+                        ? 'pickup'
+                        : 'delivery',
+                    decoration: const InputDecoration(
+                      labelText: 'Modalidad de entrega',
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'delivery',
+                        child: Text('Delivery a domicilio'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'pickup',
+                        child: Text('Recoger en tienda'),
+                      ),
+                    ],
+                    onChanged: (value) => update(() {
+                      setState(() => _deliveryMethod = value ?? 'delivery');
+                      if (value == 'pickup') {
+                        fee.text = '0';
+                        setState(() {
+                          _deliveryFee = 0;
+                          _deliveryQuoteId = '';
+                        });
+                      }
+                    }),
+                  ),
+                  TextField(
+                    controller: _address,
+                    decoration: const InputDecoration(
+                      labelText: 'Dirección de entrega',
+                    ),
+                  ),
+                  TextField(
+                    controller: _reference,
+                    decoration: const InputDecoration(labelText: 'Referencia'),
+                  ),
+                  TextField(
+                    controller: fee,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Delivery · RD\$',
+                    ),
+                    onChanged: (value) => update(() {
+                      setState(
+                        () => _deliveryFee =
+                            (double.tryParse(value.replaceAll(',', '.')) ?? 0)
+                                .roundToDouble(),
+                      );
+                    }),
+                  ),
+                  DropdownButtonFormField<String>(
+                    initialValue: _method == 'TRANSFER' ? 'TRANSFER' : 'CASH',
+                    decoration: const InputDecoration(
+                      labelText: 'Forma de pago',
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'CASH', child: Text('Efectivo')),
+                      DropdownMenuItem(
+                        value: 'TRANSFER',
+                        child: Text('Transferencia'),
+                      ),
+                    ],
+                    onChanged: (value) =>
+                        update(() => setState(() => _method = value ?? 'CASH')),
+                  ),
+                  TextField(
+                    controller: _notes,
+                    maxLines: 2,
+                    decoration: const InputDecoration(labelText: 'Notas'),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Total del cliente: ${CrmFormat.money(_draft.expectedTotalCents / 100)}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 17,
+                    ),
+                  ),
+                  const Text(
+                    'La remuneración del repartidor se liquida por separado al finalizar la entrega.',
+                    style: TextStyle(fontSize: 11.5),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Volver al editor'),
+            ),
+            if (_editingOrderId.isEmpty)
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, 'draft'),
+                child: const Text('Guardar borrador y volver'),
+              ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, 'chat'),
+              child: Text(
+                _editingOrderId.isEmpty
+                    ? 'Crear y volver al chat'
+                    : 'Guardar y volver al chat',
+              ),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, 'save'),
+              child: Text(
+                _editingOrderId.isEmpty ? 'Crear pedido' : 'Guardar cambios',
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    fee.dispose();
+    return result;
+  }
+
+  Future<void> _saveExistingOrder({required bool returnToChat}) async {
+    final problem = _draft.validate();
+    if (problem != null &&
+        !(problem == 'Escribe la dirección de entrega.' &&
+            _deliveryLocation != null)) {
+      posToast(context, problem);
+      return;
+    }
+    final orderId = _editingOrderId;
+    if (orderId.isEmpty || _saving) return;
+    setState(() => _saving = true);
+    try {
+      final response = await CrmScope.of(context, listen: false).repository
+          .updateOrder(
+            orderId,
+            items: orderUpdateItems(_lines),
+            discount: _draft.discountCents / 100,
+            deliveryFee: _deliveryFee,
+            notes: _notes.text.trim(),
+            paymentMethod: _method,
+            delivery: {
+              'method': _deliveryMethod,
+              'address': _address.text.trim(),
+              'reference': _reference.text.trim(),
+            },
+            operationKey: _operation.requestIdFor(_draft),
+          );
+      if (!mounted) return;
+      final order = mapv(response['order']);
+      final serverTotal = numv(order['total']).toDouble();
+      setState(() => _editingOrder = order);
+      CrmScope.of(context, listen: false).refresh(quiet: true);
+      posToast(
+        context,
+        'Pedido actualizado · total ${CrmFormat.money(serverTotal)}.',
+      );
+      if (returnToChat) _returnToConversation();
+    } on ApiException catch (error) {
+      if (mounted) posToast(context, error.message, tone: CrmToastTone.error);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _submitSale() async {
     if (_saving) return;
     final scope = CrmScope.of(context, listen: false);
     final repo = scope.repository;
     final problem = _draft.validate();
-    if (problem != null) {
+    if (problem != null &&
+        !(problem == 'Escribe la dirección de entrega.' &&
+            (_deliveryLocationId.isNotEmpty || _deliveryLocation != null))) {
       posToast(context, problem);
       return;
     }
@@ -2158,6 +2597,10 @@ class _PosScreenState extends State<PosScreen>
     scope.refresh(quiet: true);
     if (mounted) _loadCatalog();
     if (mounted) _loadTickets();
+    if (_returnToChatAfterSuccess && mounted) {
+      _returnToChatAfterSuccess = false;
+      _returnToConversation();
+    }
     // Abierto para cobrar una cotización concreta: se devuelve a la lista para
     // que se refresque el estado del documento (`converted`).
     if (widget.initialQuote != null &&

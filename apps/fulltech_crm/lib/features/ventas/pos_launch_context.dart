@@ -5,9 +5,13 @@ class PosLaunchContext {
     required this.customerId,
     required this.conversationId,
     this.mode = 'order',
+    this.orderId = '',
   });
 
   final String customerId;
   final String conversationId;
   final String mode;
+
+  /// Pedido existente que se abre en el mismo editor de Ventas.
+  final String orderId;
 }

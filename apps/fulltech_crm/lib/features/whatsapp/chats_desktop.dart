@@ -35,11 +35,18 @@ import 'desktop/conversation_actions.dart';
 enum _SidePanel { none, filters, newMessage }
 
 class ChatsDesktopScreen extends StatefulWidget {
-  const ChatsDesktopScreen({super.key, this.onNavigate, this.onOpenSale, this.showRail = true});
+  const ChatsDesktopScreen({
+    super.key,
+    this.onNavigate,
+    this.onOpenSale,
+    this.showRail = true,
+    this.initialConversationId,
+  });
 
   /// Cambio de módulo desde el rail; lo provee el shell.
   final ValueChanged<String>? onNavigate;
   final ValueChanged<PosLaunchContext>? onOpenSale;
+  final String? initialConversationId;
 
   /// `false` cuando el shell ya pinta el menú lateral (nada de dos rails).
   final bool showRail;
@@ -52,6 +59,7 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
   final _search = TextEditingController();
   ChatFilters _filters = const ChatFilters();
   String? _selectedId;
+
   bool _selecting = false;
   final Set<String> _selectedIds = {};
 
@@ -81,12 +89,14 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
   String? _aiLoadedConversationId;
   String? _aiScheduledConversationId;
 
-  bool get _aiEffective => _aiConversationMode == 'on' ||
+  bool get _aiEffective =>
+      _aiConversationMode == 'on' ||
       (_aiConversationMode != 'off' && _aiGlobalEnabled);
 
   @override
   void initState() {
     super.initState();
+    _selectedId = widget.initialConversationId;
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadAiGlobal());
   }
 
@@ -144,9 +154,12 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
   void _showAiLoadError(ApiException error) {
     if (_aiLoadErrorShown) return;
     _aiLoadErrorShown = true;
-    crmToast(context, error.statusCode == 404
-        ? 'El servidor local aún no cargó los controles de IA. Reinicia el backend UAT.'
-        : error.message);
+    crmToast(
+      context,
+      error.statusCode == 404
+          ? 'El servidor local aún no cargó los controles de IA. Reinicia el backend UAT.'
+          : error.message,
+    );
   }
 
   Future<void> _toggleAiGlobal() async {
@@ -154,12 +167,17 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
     setState(() => _aiGlobalBusy = true);
     try {
       final state = CrmScope.of(context, listen: false);
-      final data = await state.repository.setAiChatGlobalControl(!_aiGlobalEnabled);
+      final data = await state.repository.setAiChatGlobalControl(
+        !_aiGlobalEnabled,
+      );
       if (mounted) {
         setState(() => _aiGlobalEnabled = data['enabled'] == true);
-        crmToast(context, _aiGlobalEnabled
-            ? 'IA preparada para todos los chats. Todavía no responde automáticamente.'
-            : 'IA general desactivada. Las excepciones de cada chat se conservan.');
+        crmToast(
+          context,
+          _aiGlobalEnabled
+              ? 'IA preparada para todos los chats. Todavía no responde automáticamente.'
+              : 'IA general desactivada. Las excepciones de cada chat se conservan.',
+        );
       }
     } on ApiException catch (error) {
       if (mounted) crmToast(context, error.message);
@@ -174,17 +192,23 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
     setState(() => _aiConversationBusy = true);
     try {
       final state = CrmScope.of(context, listen: false);
-      final data = await state.repository.setAiChatConversationControl(id, mode);
+      final data = await state.repository.setAiChatConversationControl(
+        id,
+        mode,
+      );
       if (mounted && _aiLoadedConversationId == id) {
         setState(() {
           _aiConversationMode = data['mode'] as String? ?? mode;
           _aiGlobalEnabled = data['globalEnabled'] == true;
         });
-        crmToast(context, mode == 'inherit'
-            ? 'Este chat vuelve a usar el ajuste general de IA.'
-            : (_aiEffective
-                ? 'IA preparada en este chat. Todavía no responde automáticamente.'
-                : 'IA desactivada en este chat.'));
+        crmToast(
+          context,
+          mode == 'inherit'
+              ? 'Este chat vuelve a usar el ajuste general de IA.'
+              : (_aiEffective
+                    ? 'IA preparada en este chat. Todavía no responde automáticamente.'
+                    : 'IA desactivada en este chat.'),
+        );
       }
     } on ApiException catch (error) {
       if (mounted) crmToast(context, error.message);
@@ -226,7 +250,8 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
     if (value.status == ChatStatusFilter.archivados) _cargarArchivadas();
   }
 
-  List<Conversation> _filtered(List<Conversation> rows) {    final query = _search.text.trim().toLowerCase();
+  List<Conversation> _filtered(List<Conversation> rows) {
+    final query = _search.text.trim().toLowerCase();
     return rows.where((row) {
       if (query.isNotEmpty) {
         final match =
@@ -244,14 +269,16 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
     final c = ChatPalette.of(context);
     final state = CrmScope.of(context);
     // «Archivados» se alimenta de su propia consulta al servidor.
-    final base =
-        _filters.status == ChatStatusFilter.archivados ? _archivedRows : state.conversations;
+    final base = _filters.status == ChatStatusFilter.archivados
+        ? _archivedRows
+        : state.conversations;
     final conversations = _filtered(base);
     final selectedId =
         _selectedId != null && conversations.any((row) => row.id == _selectedId)
         ? _selectedId
         : (conversations.isEmpty ? null : conversations.first.id);
-    if (selectedId != null && selectedId != _aiLoadedConversationId &&
+    if (selectedId != null &&
+        selectedId != _aiLoadedConversationId &&
         selectedId != _aiScheduledConversationId) {
       _aiScheduledConversationId = selectedId;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -280,7 +307,9 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
           ChatNavigationRail(
             currentTab: 'whatsapp',
             unread: state.unreadTotal,
-            initials: (user?.initials.isNotEmpty ?? false) ? user!.initials : 'FT',
+            initials: (user?.initials.isNotEmpty ?? false)
+                ? user!.initials
+                : 'FT',
             onNavigate: (tab) => widget.onNavigate?.call(tab),
             onLogout: state.logout,
           ),
@@ -303,7 +332,9 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
                 : _aiGlobalEnabled
                 ? 'IA preparada para todos los chats. Aún no responde sola.'
                 : 'Preparar IA para todos los chats. Aún no responde sola.',
-            onToggleAi: state.session.can('settings.manage') && _aiGlobalLoaded ? _toggleAiGlobal : null,
+            onToggleAi: state.session.can('settings.manage') && _aiGlobalLoaded
+                ? _toggleAiGlobal
+                : null,
             onRetryAi: _aiGlobalUnavailable ? _loadAiGlobal : null,
             search: _search,
             onSearchChanged: (_) => setState(() {}),
@@ -330,26 +361,44 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
               : ChatScreen(
                   key: ValueKey('$selectedId-$_attachRequest'),
                   conversationId: selectedId,
-                  title: state.conversationById(selectedId)?.name ?? 'Conversación',
+                  title:
+                      state.conversationById(selectedId)?.name ??
+                      'Conversación',
                   desktop: true,
-                  aiEnabled: selectedId == _aiLoadedConversationId && _aiConversationLoaded && _aiEffective,
-                  aiLoaded: selectedId == _aiLoadedConversationId && _aiConversationLoaded,
+                  aiEnabled:
+                      selectedId == _aiLoadedConversationId &&
+                      _aiConversationLoaded &&
+                      _aiEffective,
+                  aiLoaded:
+                      selectedId == _aiLoadedConversationId &&
+                      _aiConversationLoaded,
                   aiBusy: _aiConversationBusy,
-                  aiUnavailable: selectedId == _aiLoadedConversationId && _aiConversationUnavailable,
-                  aiTooltip: selectedId == _aiLoadedConversationId && _aiConversationUnavailable
+                  aiUnavailable:
+                      selectedId == _aiLoadedConversationId &&
+                      _aiConversationUnavailable,
+                  aiTooltip:
+                      selectedId == _aiLoadedConversationId &&
+                          _aiConversationUnavailable
                       ? 'IA no disponible: recarga el servidor y haz clic para reintentar'
-                      : selectedId == _aiLoadedConversationId && _aiConversationLoaded
+                      : selectedId == _aiLoadedConversationId &&
+                            _aiConversationLoaded
                       ? (_aiEffective
-                          ? 'IA preparada en este chat. Aún no responde sola.'
-                          : 'Preparar IA en este chat. Aún no responde sola.')
+                            ? 'IA preparada en este chat. Aún no responde sola.'
+                            : 'Preparar IA en este chat. Aún no responde sola.')
                       : 'Cargando estado de la IA',
                   aiMode: _aiConversationMode,
                   aiGlobalEnabled: _aiGlobalEnabled,
-                  onToggleAi: selectedId == _aiLoadedConversationId && _aiConversationUnavailable
-                      ? () => _loadAiConversation(selectedId) : null,
-                  onSelectAiMode: state.session.can('chats.reply') &&
-                          selectedId == _aiLoadedConversationId && _aiConversationLoaded
-                      ? (mode) => _setAiConversationMode(selectedId, mode) : null,
+                  onToggleAi:
+                      selectedId == _aiLoadedConversationId &&
+                          _aiConversationUnavailable
+                      ? () => _loadAiConversation(selectedId)
+                      : null,
+                  onSelectAiMode:
+                      state.session.can('chats.reply') &&
+                          selectedId == _aiLoadedConversationId &&
+                          _aiConversationLoaded
+                      ? (mode) => _setAiConversationMode(selectedId, mode)
+                      : null,
                   autoAttach: _pendingAttach,
                   onNavigate: widget.onNavigate,
                   onOpenSale: widget.onOpenSale,
@@ -374,7 +423,9 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
                   child: BackdropFilter(
                     filter: ui.ImageFilter.blur(sigmaX: 7, sigmaY: 7),
                     child: Container(
-                      color: c.dark ? const Color(0x66000000) : const Color(0x2E0B1D24),
+                      color: c.dark
+                          ? const Color(0x66000000)
+                          : const Color(0x2E0B1D24),
                     ),
                   ),
                 ),
@@ -390,7 +441,10 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
                   curve: Curves.easeOutCubic,
                   builder: (context, value, child) => Transform.translate(
                     offset: Offset(sideWidth * (1 - value), 0),
-                    child: Opacity(opacity: value.clamp(0.0, 1.0), child: child),
+                    child: Opacity(
+                      opacity: value.clamp(0.0, 1.0),
+                      child: child,
+                    ),
                   ),
                   child: _side == _SidePanel.filters
                       ? ChatFilterPanel(
@@ -398,11 +452,13 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
                           filters: _filters,
                           conversations: state.conversations,
                           onChanged: _cambiarFiltros,
-                          onClose: () => setState(() => _side = _SidePanel.none),
+                          onClose: () =>
+                              setState(() => _side = _SidePanel.none),
                         )
                       : ChatNewMessagePanel(
                           width: formWidth,
-                          onClose: () => setState(() => _side = _SidePanel.none),
+                          onClose: () =>
+                              setState(() => _side = _SidePanel.none),
                           onCreated: (id) => setState(() {
                             _side = _SidePanel.none;
                             _selectedId = id;
@@ -436,12 +492,16 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
         });
         // Se limpia en el siguiente fotograma: el hilo ya lo consumió al montarse.
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && _pendingAttach != null) setState(() => _pendingAttach = null);
+          if (mounted && _pendingAttach != null)
+            setState(() => _pendingAttach = null);
         });
         return;
       case 'followup':
         // El seguimiento se crea desde su módulo; aquí se abre con el cliente a la vista.
-        crmToast(context, 'Abre el seguimiento de ${conversation.name} en Seguimientos.');
+        crmToast(
+          context,
+          'Abre el seguimiento de ${conversation.name} en Seguimientos.',
+        );
         widget.onNavigate?.call('seguimientos');
         return;
       case 'select':
@@ -455,12 +515,21 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
       case 'archive':
       case 'unarchive':
         try {
-          await state.repository.archiveConversation(conversation.id, action == 'archive');
+          await state.repository.archiveConversation(
+            conversation.id,
+            action == 'archive',
+          );
           await state.refresh(quiet: true);
           if (!mounted) return;
-          crmToast(context, action == 'archive' ? 'Conversación archivada.' : 'Conversación desarchivada.');
+          crmToast(
+            context,
+            action == 'archive'
+                ? 'Conversación archivada.'
+                : 'Conversación desarchivada.',
+          );
           // La lista de archivadas es su propia consulta: se vuelve a pedir.
-          if (_filters.status == ChatStatusFilter.archivados) await _cargarArchivadas();
+          if (_filters.status == ChatStatusFilter.archivados)
+            await _cargarArchivadas();
         } on ApiException catch (error) {
           if (!mounted) return;
           crmToast(context, error.message);
@@ -468,7 +537,11 @@ class _ChatsDesktopScreenState extends State<ChatsDesktopScreen> {
         return;
     }
     if (!mounted) return;
-    final refresh = await ConversationActions.run(context, action, conversation);
+    final refresh = await ConversationActions.run(
+      context,
+      action,
+      conversation,
+    );
     if (!mounted || !refresh) return;
     await state.refresh(quiet: true);
   }
@@ -520,18 +593,11 @@ class _NoConversation extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            Icons.forum_outlined,
-            size: 38,
-            color: c.textSecondary,
-          ),
+          Icon(Icons.forum_outlined, size: 38, color: c.textSecondary),
           const SizedBox(height: 12),
           Text(
             'Elige una conversación',
-            style: t.title.copyWith(
-              fontSize: 16,
-              fontWeight: FontWeight.w500,
-            ),
+            style: t.title.copyWith(fontSize: 16, fontWeight: FontWeight.w500),
           ),
           const SizedBox(height: 6),
           Text(

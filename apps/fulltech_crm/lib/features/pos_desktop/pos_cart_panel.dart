@@ -51,6 +51,7 @@ class PosCartPanel extends StatelessWidget {
     this.loadingContext = false,
     this.contextError,
     this.onReloadContext,
+    this.checkoutLabel,
   });
 
   final List<PosLine> lines;
@@ -98,9 +99,10 @@ class PosCartPanel extends StatelessWidget {
   final bool loadingContext;
   final String? contextError;
   final VoidCallback? onReloadContext;
+  final String? checkoutLabel;
 
   int get _subtotalCents =>
-      lines.fold<int>(0, (sum, line) => sum + line.grossCents);
+      lines.fold<int>(0, (sum, line) => sum + line.netCents);
 
   /// Misma regla que `discountCents()` de `pos-math.js`: el descuento se aplica
   /// sobre el subtotal y el total lo confirma el servidor al cobrar.
@@ -830,11 +832,13 @@ class PosCartPanel extends StatelessWidget {
 
   Widget _checkoutBar(BuildContext context) {
     final p = PosPalette.of(context);
-    final modeLabel = switch (mode) {
-      'quote' => 'Guardar cotización',
-      'order' => 'Crear pedido',
-      _ => 'Cobrar',
-    };
+    final modeLabel =
+        checkoutLabel ??
+        switch (mode) {
+          'quote' => 'Guardar cotización',
+          'order' => 'Crear pedido',
+          _ => 'Cobrar',
+        };
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 0, 10, 5),
       child: SizedBox(

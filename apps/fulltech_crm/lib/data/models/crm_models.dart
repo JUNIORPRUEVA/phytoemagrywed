@@ -581,7 +581,10 @@ class DeliverySession {
       lng: position['longitude'] == null ? null : dub(position['longitude']),
       updatedAt: str(
         position['at'],
-        str(position['updated_at'], str(json['updated_at'])),
+        str(
+          position['recorded_at'],
+          str(position['updated_at'], str(json['updated_at'])),
+        ),
       ),
     );
   }

@@ -266,10 +266,12 @@ class _CrmShellState extends State<CrmShell> {
   late bool _menuOpen = widget.initialMenuOpen;
   PosLaunchContext? _posLaunch;
   int _posLaunchVersion = 0;
+  String? _chatReturnConversationId;
 
   void _openSale(PosLaunchContext launch) {
     setState(() {
       _posLaunch = launch;
+      _chatReturnConversationId = launch.conversationId;
       _posLaunchVersion++;
       _tab = 'pos';
       _menuOpen = false;
@@ -385,6 +387,7 @@ class _CrmShellState extends State<CrmShell> {
           ? ChatsDesktopScreen(
               onNavigate: _go,
               onOpenSale: _openSale,
+              initialConversationId: _chatReturnConversationId,
               showRail: false,
             )
           : const WhatsappScreen(),

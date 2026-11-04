@@ -7,10 +7,12 @@ import '../../../core/format/crm_format.dart';
 import '../../../core/net/api_client.dart';
 import '../../../data/crm_repository.dart';
 import '../../../data/models/crm_models.dart';
+import '../../ventas/pos_order_edit.dart';
 import '../../common/crm_ui.dart';
 import 'chat_desktop_theme.dart';
+import 'chat_order_live_map.dart';
 
-/// Columna de PEDIDOS del cliente (izquierda del hilo, ~30 % del ancho).
+/// Columna de PEDIDOS del cliente (encima del hilo, ~30 % del ancho).
 ///
 /// Abre en el **pedido en curso** (el abierto más reciente) con su estado y sus
 /// líneas, y desde ahí se puede ver la lista completa. Mismos datos que el panel
@@ -108,7 +110,9 @@ class _ChatOrdersPanelState extends State<ChatOrdersPanel> {
 
   bool _abierto(Map<String, dynamic> pedido) {
     final estado = str(pedido['status']).toLowerCase();
-    return estado != 'entregado' && estado != 'cancelado' && estado != 'perdido';
+    return estado != 'entregado' &&
+        estado != 'cancelado' &&
+        estado != 'perdido';
   }
 
   @override
@@ -122,7 +126,13 @@ class _ChatOrdersPanelState extends State<ChatOrdersPanel> {
         decoration: BoxDecoration(
           color: fondo,
           border: Border(left: BorderSide(color: c.divider)),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.22), blurRadius: 28, offset: const Offset(-10, 0))],
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.22),
+              blurRadius: 28,
+              offset: const Offset(-10, 0),
+            ),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -136,33 +146,47 @@ class _ChatOrdersPanelState extends State<ChatOrdersPanel> {
                   ? null
                   : FilledButton.tonalIcon(
                       onPressed: () => setState(() => _verTodos = !_verTodos),
-                      icon: Icon(_verTodos ? Icons.receipt_long_outlined : Icons.list_alt_rounded, size: 16),
-                      label: Text(_verTodos ? 'Ver el actual' : 'Ver lista (${_pedidos.length})'),
+                      icon: Icon(
+                        _verTodos
+                            ? Icons.receipt_long_outlined
+                            : Icons.list_alt_rounded,
+                        size: 16,
+                      ),
+                      label: Text(
+                        _verTodos
+                            ? 'Ver el actual'
+                            : 'Ver lista (${_pedidos.length})',
+                      ),
                       style: FilledButton.styleFrom(
                         visualDensity: VisualDensity.compact,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         backgroundColor: c.accent.withValues(alpha: 0.14),
                         foregroundColor: c.accent,
-                        textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                        textStyle: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
             ),
             Divider(height: 1, color: c.divider),
             Expanded(
               child: _loading
-                  ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                  ? const Center(
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
                   : _error != null
-                      ? _ErrorText(message: _error!)
-                      : _pedidos.isEmpty
-                          ? Center(
-                              child: Text(
-                                'Este cliente todavía no tiene pedidos.',
-                                style: TextStyle(fontSize: 13, color: c.textSecondary),
-                              ),
-                            )
-                          : _verTodos
-                              ? _lista(context)
-                              : _detalleVista(context),
+                  ? _ErrorText(message: _error!)
+                  : _pedidos.isEmpty
+                  ? Center(
+                      child: Text(
+                        'Este cliente todavía no tiene pedidos.',
+                        style: TextStyle(fontSize: 13, color: c.textSecondary),
+                      ),
+                    )
+                  : _verTodos
+                  ? _lista(context)
+                  : _detalleVista(context),
             ),
           ],
         ),
@@ -178,12 +202,20 @@ class _ChatOrdersPanelState extends State<ChatOrdersPanel> {
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
       children: [
         if (abiertos.isNotEmpty) ...[
-          _SectionLabel(label: 'Pendientes', count: abiertos.length, color: c.accent),
+          _SectionLabel(
+            label: 'Pendientes',
+            count: abiertos.length,
+            color: c.accent,
+          ),
           for (final pedido in abiertos) _filaPedido(context, pedido),
         ],
         if (cerrados.isNotEmpty) ...[
           const SizedBox(height: 6),
-          _SectionLabel(label: 'Historial', count: cerrados.length, color: c.textSecondary),
+          _SectionLabel(
+            label: 'Historial',
+            count: cerrados.length,
+            color: c.textSecondary,
+          ),
           for (final pedido in cerrados) _filaPedido(context, pedido),
         ],
       ],
@@ -276,210 +308,265 @@ class _ChatOrdersPanelState extends State<ChatOrdersPanel> {
     final subtotal = _subtotal > 0 ? _subtotal : total;
     final descuento = _descuento;
     final envio = _envio;
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+    final totalCliente = orderPayableTotal(_detalle);
+    final totalGuardado = numv(_detalle['total']).toDouble();
+    final requiereRecalculo = (totalCliente - totalGuardado).abs() >= 0.01;
+    final punto = _punto();
+    return Column(
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                str(_detalle['order_number'], _seleccionado),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontFamily: ChatDesktopMetrics.fontFamily,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                  color: c.textPrimary,
-                ),
-              ),
-            ),
-            _Estado(estado: str(_detalle['status'], '—'), abierto: abierto),
-          ],
-        ),
-        const SizedBox(height: 2),
-        Text(
-          CrmFormat.dayFull(_detalle['created_at']),
-          style: TextStyle(fontFamily: ChatDesktopMetrics.fontFamily, fontSize: 11.5, color: c.textSecondary),
-        ),
-        const SizedBox(height: 14),
-        const _Label(texto: 'DETALLE'),
-        const SizedBox(height: 6),
-        for (final linea in lineas)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Text(
-                    '${str(linea['variantName'], str(linea['label'], 'Producto'))} × ${linea['quantity'] ?? 1}',
-                    style: TextStyle(
-                      fontFamily: ChatDesktopMetrics.fontFamily,
-                      fontSize: 12.6,
-                      height: 1.3,
-                      color: c.textPrimary,
+        Expanded(
+          flex: punto == null ? 1 : 4,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      str(_detalle['order_number'], _seleccionado),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: ChatDesktopMetrics.fontFamily,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: c.textPrimary,
+                      ),
                     ),
                   ),
+                  _Estado(
+                    estado: str(_detalle['status'], '—'),
+                    abierto: abierto,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                CrmFormat.dayFull(_detalle['created_at']),
+                style: TextStyle(
+                  fontFamily: ChatDesktopMetrics.fontFamily,
+                  fontSize: 11.5,
+                  color: c.textSecondary,
                 ),
-                Text(
-                  CrmFormat.money(num.tryParse('${linea['total'] ?? linea['subtotal'] ?? 0}') ?? 0),
-                  style: TextStyle(
-                    fontFamily: ChatDesktopMetrics.fontFamily,
-                    fontSize: 12.6,
-                    fontWeight: FontWeight.w600,
-                    color: c.textPrimary,
+              ),
+              const SizedBox(height: 14),
+              const _Label(texto: 'DETALLE'),
+              const SizedBox(height: 6),
+              for (final linea in lineas)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${str(linea['variantName'], str(linea['label'], 'Producto'))} × ${linea['quantity'] ?? 1}',
+                          style: TextStyle(
+                            fontFamily: ChatDesktopMetrics.fontFamily,
+                            fontSize: 12.6,
+                            height: 1.3,
+                            color: c.textPrimary,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        CrmFormat.money(
+                          num.tryParse(
+                                '${linea['total'] ?? linea['subtotal'] ?? 0}',
+                              ) ??
+                              0,
+                        ),
+                        style: TextStyle(
+                          fontFamily: ChatDesktopMetrics.fontFamily,
+                          fontSize: 12.6,
+                          fontWeight: FontWeight.w600,
+                          color: c.textPrimary,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
-            ),
-          ),
-        Divider(height: 20, color: c.divider),
-        const _Label(texto: 'PAGO'),
-        const SizedBox(height: 6),
-        _DatoLinea(etiqueta: 'Productos', valor: CrmFormat.money(subtotal)),
-        if (descuento > 0) _DatoLinea(etiqueta: 'Descuento', valor: '-${CrmFormat.money(descuento)}'),
-        _DatoLinea(etiqueta: 'Delivery', valor: envio > 0 ? CrmFormat.money(envio) : 'Sin costo'),
-        _DatoLinea(etiqueta: 'Total', valor: CrmFormat.money(total), fuerte: true),
-        _DatoLinea(etiqueta: 'Forma de pago', valor: _metodoPago()),
-        _DatoLinea(etiqueta: 'Estado del pago', valor: _estadoPago(), fuerte: _porCobrar(total) > 0),
-        if (_porCobrar(total) > 0)
-          _DatoLinea(etiqueta: 'Por cobrar', valor: CrmFormat.money(_porCobrar(total)), fuerte: true),
+              Divider(height: 20, color: c.divider),
+              const _Label(texto: 'PAGO'),
+              const SizedBox(height: 6),
+              _DatoLinea(
+                etiqueta: 'Productos',
+                valor: CrmFormat.money(subtotal),
+              ),
+              if (descuento > 0)
+                _DatoLinea(
+                  etiqueta: 'Descuento',
+                  valor: '-${CrmFormat.money(descuento)}',
+                ),
+              _DatoLinea(
+                etiqueta: 'Delivery',
+                valor: envio > 0 ? CrmFormat.money(envio) : 'Sin costo',
+              ),
+              _DatoLinea(
+                etiqueta: 'Total general',
+                valor: CrmFormat.money(totalCliente),
+                fuerte: true,
+              ),
+              if (requiereRecalculo)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 5),
+                  child: Text(
+                    'El total guardado no incluye todo el desglose. Edita y guarda el pedido antes de cobrar.',
+                    style: TextStyle(fontSize: 11.5, color: c.accent),
+                  ),
+                ),
+              _DatoLinea(etiqueta: 'Forma de pago', valor: _metodoPago()),
+              _DatoLinea(
+                etiqueta: 'Estado del pago',
+                valor: _estadoPago(),
+                fuerte: _porCobrar(totalCliente) > 0,
+              ),
+              if (_porCobrar(totalCliente) > 0)
+                _DatoLinea(
+                  etiqueta: 'Por cobrar',
+                  valor: CrmFormat.money(_porCobrar(totalCliente)),
+                  fuerte: true,
+                ),
 
-        /*
+              /*
          * ENTREGA: método real del pedido (`delivery.method`: delivery, pickup,
          * etc.), dirección, referencia y cuándo está programado. Debajo va la
          * UBICACIÓN: mapa si hay coordenadas del pedido o del cliente, y si no
          * un aviso claro en vez de un hueco vacío.
          */
-        const SizedBox(height: 14),
-        const _Label(texto: 'ENTREGA'),
-        const SizedBox(height: 6),
-        _DatoLinea(etiqueta: 'Tipo', valor: _metodoEntrega()),
-        if (str(entrega['address']).isNotEmpty) _DatoLinea(etiqueta: 'Dirección', valor: str(entrega['address'])),
-        if (str(entrega['city']).isNotEmpty) _DatoLinea(etiqueta: 'Ciudad', valor: str(entrega['city'])),
-        if (str(entrega['reference']).isNotEmpty) _DatoLinea(etiqueta: 'Referencia', valor: str(entrega['reference'])),
-        if (str(entrega['driver_name'], str(entrega['driver'])).isNotEmpty)
-          _DatoLinea(etiqueta: 'Repartidor', valor: str(entrega['driver_name'], str(entrega['driver']))),
-        if (str(entrega['scheduled_at']).isNotEmpty)
-          _DatoLinea(etiqueta: 'Programado', valor: CrmFormat.dayFull(entrega['scheduled_at'])),
-        if (str(entrega['note'], str(entrega['notes'])).isNotEmpty)
-          _DatoLinea(etiqueta: 'Indicaciones', valor: str(entrega['note'], str(entrega['notes']))),
-        if (str(_detalle['notes']).isNotEmpty) _DatoLinea(etiqueta: 'Comentario', valor: str(_detalle['notes'])),
-        if (str(_cliente['name']).isNotEmpty) _DatoLinea(etiqueta: 'Cliente', valor: str(_cliente['name'])),
-        if (str(_cliente['phone_e164'], str(_cliente['phone'])).isNotEmpty)
-          _DatoLinea(etiqueta: 'Teléfono', valor: str(_cliente['phone_e164'], str(_cliente['phone']))),
-
-        const SizedBox(height: 14),
-        const _Label(texto: 'UBICACIÓN'),
-        const SizedBox(height: 6),
-        if (_punto() != null) ...[
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: SizedBox(
-              height: 170,
-              child: FlutterMap(
-                options: MapOptions(
-                  initialCenter: _punto()!,
-                  initialZoom: 15.5,
-                  interactionOptions: const InteractionOptions(flags: InteractiveFlag.none),
+              const SizedBox(height: 14),
+              const _Label(texto: 'ENTREGA'),
+              const SizedBox(height: 6),
+              _DatoLinea(etiqueta: 'Tipo', valor: _metodoEntrega()),
+              if (str(entrega['address']).isNotEmpty)
+                _DatoLinea(
+                  etiqueta: 'Dirección',
+                  valor: str(entrega['address']),
                 ),
-                children: [
-                  TileLayer(
-                    urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.fulltech.crm',
+              if (str(entrega['city']).isNotEmpty)
+                _DatoLinea(etiqueta: 'Ciudad', valor: str(entrega['city'])),
+              if (str(entrega['reference']).isNotEmpty)
+                _DatoLinea(
+                  etiqueta: 'Referencia',
+                  valor: str(entrega['reference']),
+                ),
+              if (str(
+                entrega['driver_name'],
+                str(entrega['driver']),
+              ).isNotEmpty)
+                _DatoLinea(
+                  etiqueta: 'Repartidor',
+                  valor: str(entrega['driver_name'], str(entrega['driver'])),
+                ),
+              if (str(entrega['scheduled_at']).isNotEmpty)
+                _DatoLinea(
+                  etiqueta: 'Programado',
+                  valor: CrmFormat.dayFull(entrega['scheduled_at']),
+                ),
+              if (str(entrega['note'], str(entrega['notes'])).isNotEmpty)
+                _DatoLinea(
+                  etiqueta: 'Indicaciones',
+                  valor: str(entrega['note'], str(entrega['notes'])),
+                ),
+              if (str(_detalle['notes']).isNotEmpty)
+                _DatoLinea(
+                  etiqueta: 'Comentario',
+                  valor: str(_detalle['notes']),
+                ),
+              if (str(_cliente['name']).isNotEmpty)
+                _DatoLinea(etiqueta: 'Cliente', valor: str(_cliente['name'])),
+              if (str(
+                _cliente['phone_e164'],
+                str(_cliente['phone']),
+              ).isNotEmpty)
+                _DatoLinea(
+                  etiqueta: 'Teléfono',
+                  valor: str(_cliente['phone_e164'], str(_cliente['phone'])),
+                ),
+
+              if (punto == null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 14),
+                  child: const _Label(texto: 'DOMICILIO'),
+                ),
+              if (punto == null)
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: c.fieldBg,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: c.divider),
                   ),
-                  MarkerLayer(
-                    markers: [
-                      Marker(
-                        point: _punto()!,
-                        width: 34,
-                        height: 34,
-                        child: Icon(Icons.location_on, size: 34, color: c.accent),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.location_off_outlined,
+                        size: 18,
+                        color: c.textSecondary,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _textoSinUbicacion(),
+                          style: TextStyle(
+                            fontFamily: ChatDesktopMetrics.fontFamily,
+                            fontSize: 11.5,
+                            height: 1.35,
+                            color: c.textSecondary,
+                          ),
+                        ),
                       ),
                     ],
                   ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _etiquetaUbicacion(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontFamily: ChatDesktopMetrics.fontFamily,
-                    fontSize: 11,
-                    color: c.textSecondary,
-                  ),
                 ),
-              ),
-              TextButton.icon(
-                onPressed: _abrirEnMapas,
-                icon: const Icon(Icons.map_outlined, size: 16),
-                label: const Text('Abrir mapa', style: TextStyle(fontSize: 12)),
-                style: TextButton.styleFrom(
-                  foregroundColor: c.accent,
-                  visualDensity: VisualDensity.compact,
-                ),
-              ),
-            ],
-          ),
-        ] else
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: c.fieldBg,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: c.divider),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.location_off_outlined, size: 18, color: c.textSecondary),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _textoSinUbicacion(),
-                    style: TextStyle(
-                      fontFamily: ChatDesktopMetrics.fontFamily,
-                      fontSize: 11.5,
-                      height: 1.35,
-                      color: c.textSecondary,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
 
-        /*
+              /*
          * EDITAR: vuelve a la pantalla de facturación con el pedido cargado.
          * Mientras el POS no acepte un pedido existente, se abre el módulo de
          * ventas; el aviso lo dice para no prometer lo que no hace.
          */
-        if (abierto) ...[
-          const SizedBox(height: 16),
-          SizedBox(
-            height: 46,
-            child: FilledButton.icon(
-              onPressed: () {
-                widget.onEditOrder?.call(_seleccionado);
-                widget.onClose();
-              },
-              icon: const Icon(Icons.edit_outlined, size: 18),
-              label: const Text('Editar pedido', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
-              style: FilledButton.styleFrom(
-                backgroundColor: c.accent,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
+              if (abierto) ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: 46,
+                  child: FilledButton.icon(
+                    onPressed: () {
+                      widget.onEditOrder?.call(_seleccionado);
+                      widget.onClose();
+                    },
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    label: const Text(
+                      'Editar pedido',
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: c.accent,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (punto != null)
+          Expanded(
+            flex: 6,
+            child: ChatOrderLiveMap(
+              key: ValueKey(_seleccionado),
+              repository: widget.repository,
+              orderId: _seleccionado,
+              destination: punto,
+              customerName: widget.customerName,
+              locationLabel: _etiquetaUbicacion(),
             ),
           ),
-        ],
       ],
     );
   }
@@ -494,7 +581,13 @@ class _ChatOrdersPanelState extends State<ChatOrdersPanel> {
     final clave = _estadoPagoClave();
     if (clave == 'paid' || clave == 'void') return 0;
     final pago = mapv(_detalle['payment']);
-    final explicito = num.tryParse('${pago['pending'] ?? pago['balance'] ?? _detalle['balance_due'] ?? ''}');
+    if ((numv(_detalle['total']) - total).abs() >= 0.01) {
+      final remaining = total - _pagado(total);
+      return remaining > 0 ? remaining : 0;
+    }
+    final explicito = num.tryParse(
+      '${pago['pending'] ?? pago['balance'] ?? _detalle['balance_due'] ?? ''}',
+    );
     if (explicito != null && explicito > 0) return explicito;
     final resta = total - _pagado(total);
     return resta > 0 ? resta : 0;
@@ -505,13 +598,18 @@ class _ChatOrdersPanelState extends State<ChatOrdersPanel> {
   num get _descuento => num.tryParse('${_detalle['discount'] ?? 0}') ?? 0;
 
   num get _envio =>
-      num.tryParse('${_detalle['delivery_fee'] ?? mapv(_detalle['delivery'])['fee'] ?? 0}') ?? 0;
+      num.tryParse(
+        '${_detalle['delivery_fee'] ?? mapv(_detalle['delivery'])['fee'] ?? 0}',
+      ) ??
+      0;
 
   String _estadoPagoClave() {
     final estado = str(_detalle['payment_status']).toLowerCase();
     if (estado.isEmpty) {
       // Pedidos sin estado explícito: se deduce de si ya están entregados.
-      return str(_detalle['status']).toLowerCase() == 'entregado' ? 'paid' : 'pending';
+      return str(_detalle['status']).toLowerCase() == 'entregado'
+          ? 'paid'
+          : 'pending';
     }
     return estado;
   }
@@ -577,15 +675,19 @@ class _ChatOrdersPanelState extends State<ChatOrdersPanel> {
     final loc = mapv(entrega['location']);
     final fecha = str(loc['captured_at'] ?? _ubicacion['created_at']);
     final nombre = str(loc['name'] ?? _ubicacion['name']);
-    final base = nombre.isEmpty ? 'Ubicación compartida por el cliente' : nombre;
+    final base = nombre.isEmpty
+        ? 'Ubicación compartida por el cliente'
+        : nombre;
     return fecha.isEmpty ? base : '$base · ${CrmFormat.dayFull(fecha)}';
   }
 
   String _textoSinUbicacion() {
     final entrega = mapv(_detalle['delivery']);
     final direccion = str(entrega['address']);
-    if (direccion.isNotEmpty) return 'Sin coordenadas en el mapa. Dirección: $direccion';
-    if (str(_detalle['delivery']).isNotEmpty && _metodoEntrega() == 'Recoger en tienda') {
+    if (direccion.isNotEmpty)
+      return 'Sin coordenadas en el mapa. Dirección: $direccion';
+    if (str(_detalle['delivery']).isNotEmpty &&
+        _metodoEntrega() == 'Recoger en tienda') {
       return 'El cliente recoge en la tienda: este pedido no lleva dirección ni mapa.';
     }
     return 'El cliente todavía no ha compartido su ubicación por WhatsApp.';
@@ -596,20 +698,16 @@ class _ChatOrdersPanelState extends State<ChatOrdersPanel> {
   LatLng? _punto() {
     final entrega = mapv(_detalle['delivery']);
     final loc = mapv(entrega['location']);
-    final lat = num.tryParse('${loc['lat'] ?? loc['latitude'] ?? _ubicacion['latitude'] ?? ''}');
-    final lng = num.tryParse('${loc['lng'] ?? loc['longitude'] ?? _ubicacion['longitude'] ?? ''}');
+    final lat = num.tryParse(
+      '${loc['lat'] ?? loc['latitude'] ?? _ubicacion['latitude'] ?? ''}',
+    );
+    final lng = num.tryParse(
+      '${loc['lng'] ?? loc['longitude'] ?? _ubicacion['longitude'] ?? ''}',
+    );
     if (lat == null || lng == null) return null;
+    if (lat.abs() > 90 || lng.abs() > 180) return null;
     if (lat.abs() < 0.001 && lng.abs() < 0.001) return null;
     return LatLng(lat.toDouble(), lng.toDouble());
-  }
-
-  Future<void> _abrirEnMapas() async {
-    final punto = _punto();
-    if (punto == null) return;
-    final uri = Uri.parse(
-      'https://www.google.com/maps/search/?api=1&query=${punto.latitude},${punto.longitude}',
-    );
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 }
 
@@ -640,7 +738,6 @@ class _ChatCustomerPanelState extends State<ChatCustomerPanel> {
   Map<String, dynamic> _seguimiento = const {};
   Map<String, dynamic> _ultimaUbicacion = const {};
   List<Map<String, dynamic>> _historial = const [];
-  List<String> _etiquetas = const [];
   int _programados = 0;
   bool _ventanaAbierta = false;
 
@@ -684,10 +781,6 @@ class _ChatCustomerPanelState extends State<ChatCustomerPanel> {
         _seguimiento = mapv(perfil['nextFollowup']);
         _ultimaUbicacion = mapv(perfil['lastLocation']);
         _historial = historia;
-        _etiquetas = listv(cliente['tags'])
-            .map((row) => str(mapv(row)['label']))
-            .where((label) => label.isNotEmpty)
-            .toList();
         _programados = listv(perfil['scheduled']).length;
         _ventanaAbierta = perfil['canSendFreeText'] == true;
         _loading = false;
@@ -706,16 +799,6 @@ class _ChatCustomerPanelState extends State<ChatCustomerPanel> {
     final c = ChatPalette.of(context);
     final fondo = c.dark ? const Color(0xFF171A1B) : Colors.white;
     final nombre = str(_cliente['name'], 'Cliente');
-    final etapa = _etapa(_cliente);
-    final compras = _entero(_totales['total_purchases']);
-    final gastado = num.tryParse('${_totales['total_spent'] ?? 0}') ?? 0;
-    final abiertos = _entero(_totales['open_purchases']);
-    final ticket = compras > 0 ? gastado / compras : 0;
-    final creado = CrmFormat.dayFull(_cliente['created_at']);
-    final noContactar = _cliente['do_not_contact'] == true;
-    final motivoEtapa = str(_cliente['customer_stage_reason']);
-    final interes = str(_cliente['interest_reason']);
-    final proximo = str(_seguimiento['scheduled_at']);
     return Material(
       color: fondo,
       child: Container(
@@ -723,7 +806,13 @@ class _ChatCustomerPanelState extends State<ChatCustomerPanel> {
         decoration: BoxDecoration(
           color: fondo,
           border: Border(left: BorderSide(color: c.divider)),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.22), blurRadius: 28, offset: const Offset(-10, 0))],
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.22),
+              blurRadius: 28,
+              offset: const Offset(-10, 0),
+            ),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -737,215 +826,269 @@ class _ChatCustomerPanelState extends State<ChatCustomerPanel> {
             Divider(height: 1, color: c.divider),
             Expanded(
               child: _loading
-                  ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                  ? const Center(
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
                   : _error != null
-                      ? _ErrorText(message: _error!)
-                      : ListView(
-                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
-                          children: [
-                            Row(
-                              children: [
-                                CrmAvatar(label: nombre.isEmpty ? 'FT' : nombre.substring(0, 1).toUpperCase()),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        nombre,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          fontFamily: ChatDesktopMetrics.fontFamily,
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w800,
-                                          color: c.textPrimary,
-                                        ),
-                                      ),
-                                      Text(
-                                        str(_cliente['phone_e164'], 'Sin teléfono'),
-                                        style: TextStyle(
-                                          fontFamily: ChatDesktopMetrics.fontFamily,
-                                          fontSize: 12,
-                                          color: c.textSecondary,
-                                        ),
-                                      ),
-                                      if (etapa.isNotEmpty)
-                                        Padding(
-                                          padding: const EdgeInsets.only(top: 4),
-                                          child: _Estado(estado: etapa, abierto: !noContactar),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 16),
-                            /* LO COMERCIAL, EN NÚMEROS. */
-                            Row(
-                              children: [
-                                Expanded(child: _Kpi(valor: CrmFormat.money(gastado), etiqueta: 'Comprado')),
-                                Expanded(child: _Kpi(valor: '$compras', etiqueta: compras == 1 ? 'Pedido' : 'Pedidos')),
-                                Expanded(child: _Kpi(valor: ticket > 0 ? CrmFormat.money(ticket) : '—', etiqueta: 'Ticket medio')),
-                              ],
-                            ),
-                            const SizedBox(height: 14),
-                            const _Label(texto: 'CONTACTO'),
-                            const SizedBox(height: 4),
-                            _DatoLinea(etiqueta: 'Teléfono', valor: str(_cliente['phone_e164'], '—')),
-                            if (str(_cliente['email']).isNotEmpty)
-                              _DatoLinea(etiqueta: 'Correo', valor: str(_cliente['email'])),
-                            _DatoLinea(etiqueta: 'Ciudad', valor: str(_cliente['location'], '—')),
-                            if (creado.isNotEmpty) _DatoLinea(etiqueta: 'Cliente desde', valor: creado),
-                            _DatoLinea(etiqueta: 'No contactar', valor: noContactar ? 'Sí' : 'No'),
-                            _DatoLinea(etiqueta: 'WhatsApp', valor: _ventanaAbierta ? 'Ventana abierta' : 'Solo plantillas'),
-                            const SizedBox(height: 14),
-                            const _Label(texto: 'ESTADO COMERCIAL'),
-                            const SizedBox(height: 4),
-                            _DatoLinea(etiqueta: 'Etapa', valor: etapa.isEmpty ? '—' : etapa, fuerte: true),
-                            if (motivoEtapa.isNotEmpty) _DatoLinea(etiqueta: 'Motivo', valor: motivoEtapa),
-                            if (interes.isNotEmpty) _DatoLinea(etiqueta: 'Interés', valor: interes),
-                            _DatoLinea(etiqueta: 'Pedidos abiertos', valor: '$abiertos'),
-                            if (str(_totales['last_purchase_at']).isNotEmpty)
-                              _DatoLinea(etiqueta: 'Última compra', valor: CrmFormat.dayFull(_totales['last_purchase_at'])),
-                            if (str(_totales['last_order_at']).isNotEmpty)
-                              _DatoLinea(etiqueta: 'Último pedido', valor: CrmFormat.dayFull(_totales['last_order_at'])),
-                            if (_etiquetas.isNotEmpty) ...[
-                              const SizedBox(height: 12),
-                              const _Label(texto: 'ETIQUETAS'),
-                              const SizedBox(height: 6),
-                              Wrap(
-                                spacing: 6,
-                                runSpacing: 6,
-                                children: [
-                                  for (final etiqueta in _etiquetas)
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-                                      decoration: BoxDecoration(
-                                        color: c.accent.withValues(alpha: 0.12),
-                                        borderRadius: BorderRadius.circular(999),
-                                      ),
-                                      child: Text(
-                                        etiqueta,
-                                        style: TextStyle(
-                                          fontFamily: ChatDesktopMetrics.fontFamily,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w600,
-                                          color: c.accent,
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ],
-                            const SizedBox(height: 14),
-                            const _Label(texto: 'SEGUIMIENTO'),
-                            const SizedBox(height: 4),
-                            _DatoLinea(
-                              etiqueta: 'Próximo',
-                              valor: proximo.isNotEmpty ? CrmFormat.dayFull(proximo) : 'Sin seguimiento pendiente',
-                            ),
-                            _DatoLinea(etiqueta: 'Programados', valor: '$_programados'),
-                            if (str(_cliente['notes']).isNotEmpty) ...[
-                              const SizedBox(height: 14),
-                              const _Label(texto: 'NOTAS'),
-                              const SizedBox(height: 4),
-                              Text(
-                                str(_cliente['notes']),
-                                style: TextStyle(
-                                  fontFamily: ChatDesktopMetrics.fontFamily,
-                                  fontSize: 12.6,
-                                  height: 1.35,
-                                  color: c.textPrimary,
-                                ),
-                              ),
-                            ],
-                            if (_historial.isNotEmpty) ...[
-                              const SizedBox(height: 16),
-                              const _Label(texto: 'MOVIMIENTOS (SIN CHATS NI PEDIDOS)'),
-                              const SizedBox(height: 6),
-                              for (final evento in _historial.take(10))
-                                Padding(
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        str(evento['title']),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          fontFamily: ChatDesktopMetrics.fontFamily,
-                                          fontSize: 12.4,
-                                          height: 1.3,
-                                          color: c.textPrimary,
-                                        ),
-                                      ),
-                                      Text(
-                                        CrmFormat.ago(evento['at']),
-                                        style: TextStyle(
-                                          fontFamily: ChatDesktopMetrics.fontFamily,
-                                          fontSize: 11,
-                                          color: c.textSecondary,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                            ],
-
-                            /*
-                             * UBICACIÓN: el mapa va al final, grande y con la
-                             * dirección debajo. Si el cliente nunca compartió
-                             * su ubicación se dice claramente, en vez de dejar
-                             * el hueco vacío o inventar un punto.
-                             */
-                            const SizedBox(height: 18),
-                            const _Label(texto: 'UBICACIÓN'),
-                            const SizedBox(height: 8),
-                            if (_puntoCliente() != null)
-                              _MapaUbicacion(
-                                punto: _puntoCliente()!,
-                                titulo: str(_ultimaUbicacion['name'], 'Ubicación compartida'),
-                                detalle: _direccionCliente(),
-                                edad: CrmFormat.ago(_ultimaUbicacion['created_at']),
-                                onAbrir: _abrirMapaCliente,
-                              )
-                            else
-                              Container(
-                                padding: const EdgeInsets.all(14),
-                                decoration: BoxDecoration(
-                                  color: c.fieldBg,
-                                  borderRadius: BorderRadius.circular(14),
-                                  border: Border.all(color: c.divider),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.location_off_outlined, size: 20, color: c.textSecondary),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Text(
-                                        'Este cliente todavía no ha compartido su ubicación por WhatsApp.',
-                                        style: TextStyle(
-                                          fontFamily: ChatDesktopMetrics.fontFamily,
-                                          fontSize: 12.5,
-                                          height: 1.35,
-                                          color: c.textSecondary,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                          ],
-                        ),
+                  ? _ErrorText(message: _error!)
+                  : _compactProfile(context),
             ),
           ],
         ),
       ),
     );
   }
+
+  Widget _compactProfile(BuildContext context) {
+    final c = ChatPalette.of(context);
+    final name = str(_cliente['name'], 'Cliente');
+    final stage = _etapa(_cliente);
+    final purchases = _entero(_totales['total_purchases']);
+    final spent = numv(_totales['total_spent']).toDouble();
+    final open = _entero(_totales['open_purchases']);
+    final point = _puntoCliente();
+    final notes = str(_cliente['notes']);
+
+    Widget field(String label, String value, {bool strong = false}) => Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 82,
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, color: c.textSecondary),
+            ),
+          ),
+          Expanded(
+            child: Tooltip(
+              message: value,
+              child: Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: strong ? FontWeight.w800 : FontWeight.w600,
+                  color: c.textPrimary,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    return LayoutBuilder(
+      builder: (context, limits) {
+        final mapHeight = (limits.maxHeight * 0.26).clamp(95.0, 170.0);
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  CrmAvatar(label: name.isEmpty ? 'FT' : name[0].toUpperCase()),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                            color: c.textPrimary,
+                          ),
+                        ),
+                        Text(
+                          str(_cliente['phone_e164'], 'Sin teléfono'),
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: c.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (stage.isNotEmpty)
+                    _Estado(
+                      estado: stage,
+                      abierto: _cliente['do_not_contact'] != true,
+                    ),
+                ],
+              ),
+              const SizedBox(height: 11),
+              Row(
+                children: [
+                  Expanded(
+                    child: _Kpi(
+                      valor: CrmFormat.money(spent),
+                      etiqueta: 'Comprado',
+                    ),
+                  ),
+                  Expanded(
+                    child: _Kpi(valor: '$purchases', etiqueta: 'Pedidos'),
+                  ),
+                  Expanded(
+                    child: _Kpi(
+                      valor: purchases == 0
+                          ? '—'
+                          : CrmFormat.money(spent / purchases),
+                      etiqueta: 'Ticket medio',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Divider(height: 1, color: c.divider),
+              const SizedBox(height: 10),
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const _Label(texto: 'CONTACTO'),
+                          field('Teléfono', str(_cliente['phone_e164'], '—')),
+                          if (str(_cliente['email']).isNotEmpty)
+                            field('Correo', str(_cliente['email'])),
+                          field('Ciudad', str(_cliente['location'], '—')),
+                          field(
+                            'Desde',
+                            CrmFormat.dayFull(_cliente['created_at']),
+                          ),
+                          field(
+                            'WhatsApp',
+                            _ventanaAbierta
+                                ? 'Ventana abierta'
+                                : 'Solo plantillas',
+                          ),
+                          field(
+                            'Contacto',
+                            _cliente['do_not_contact'] == true
+                                ? 'Bloqueado'
+                                : 'Permitido',
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const _Label(texto: 'ACTIVIDAD'),
+                          field(
+                            'Etapa',
+                            stage.isEmpty ? '—' : stage,
+                            strong: true,
+                          ),
+                          field('Abiertos', '$open'),
+                          field(
+                            'Último',
+                            CrmFormat.dayFull(_totales['last_order_at']),
+                          ),
+                          field(
+                            'Seguimiento',
+                            str(_seguimiento['scheduled_at']).isEmpty
+                                ? 'Ninguno'
+                                : CrmFormat.dayFull(
+                                    _seguimiento['scheduled_at'],
+                                  ),
+                          ),
+                          field('Programados', '$_programados'),
+                          if (notes.isNotEmpty)
+                            Tooltip(
+                              message: notes,
+                              child: Text(
+                                'Nota: $notes',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: c.textPrimary,
+                                ),
+                              ),
+                            ),
+                          if (_historial.isNotEmpty)
+                            TextButton(
+                              onPressed: _showHistory,
+                              style: TextButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding: EdgeInsets.zero,
+                              ),
+                              child: Text(
+                                'Ver movimientos (${_historial.length})',
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              const _Label(texto: 'UBICACIÓN'),
+              const SizedBox(height: 5),
+              if (point != null)
+                _MapaUbicacion(
+                  punto: point,
+                  titulo: str(_ultimaUbicacion['name'], 'Ubicación compartida'),
+                  detalle: _direccionCliente(),
+                  edad: CrmFormat.ago(_ultimaUbicacion['created_at']),
+                  onAbrir: _abrirMapaCliente,
+                  mapHeight: mapHeight,
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    'El cliente todavía no ha compartido ubicación.',
+                    style: TextStyle(fontSize: 11.5, color: c.textSecondary),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showHistory() => showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Movimientos del cliente'),
+      content: SizedBox(
+        width: 450,
+        height: 320,
+        child: ListView(
+          children: [
+            for (final event in _historial)
+              ListTile(
+                dense: true,
+                title: Text(str(event['title'])),
+                subtitle: Text(CrmFormat.ago(event['at'])),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('Cerrar'),
+        ),
+      ],
+    ),
+  );
 
   static int _entero(Object? value) {
     if (value is num) return value.toInt();
@@ -954,8 +1097,12 @@ class _ChatCustomerPanelState extends State<ChatCustomerPanel> {
 
   /// Coordenadas de la última ubicación del cliente, si las hay y son válidas.
   LatLng? _puntoCliente() {
-    final lat = num.tryParse('${_ultimaUbicacion['latitude'] ?? _ultimaUbicacion['lat'] ?? ''}');
-    final lng = num.tryParse('${_ultimaUbicacion['longitude'] ?? _ultimaUbicacion['lng'] ?? ''}');
+    final lat = num.tryParse(
+      '${_ultimaUbicacion['latitude'] ?? _ultimaUbicacion['lat'] ?? ''}',
+    );
+    final lng = num.tryParse(
+      '${_ultimaUbicacion['longitude'] ?? _ultimaUbicacion['lng'] ?? ''}',
+    );
     if (lat == null || lng == null) return null;
     if (lat.abs() < 0.001 && lng.abs() < 0.001) return null;
     return LatLng(lat.toDouble(), lng.toDouble());
@@ -968,7 +1115,8 @@ class _ChatCustomerPanelState extends State<ChatCustomerPanel> {
     final coordenadas = punto == null
         ? ''
         : '${punto.latitude.toStringAsFixed(5)}, ${punto.longitude.toStringAsFixed(5)}';
-    if (direccion.isNotEmpty && coordenadas.isNotEmpty) return '$direccion · $coordenadas';
+    if (direccion.isNotEmpty && coordenadas.isNotEmpty)
+      return '$direccion · $coordenadas';
     if (direccion.isNotEmpty) return direccion;
     return coordenadas;
   }
@@ -1159,6 +1307,7 @@ class _MapaUbicacion extends StatelessWidget {
     required this.detalle,
     required this.edad,
     required this.onAbrir,
+    this.mapHeight = 220,
   });
 
   final LatLng punto;
@@ -1166,6 +1315,7 @@ class _MapaUbicacion extends StatelessWidget {
   final String detalle;
   final String edad;
   final Future<void> Function() onAbrir;
+  final double mapHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -1175,14 +1325,20 @@ class _MapaUbicacion extends StatelessWidget {
         color: c.fieldBg,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: c.divider),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 14, offset: const Offset(0, 4))],
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SizedBox(
-            height: 220,
+            height: mapHeight,
             child: Stack(
               children: [
                 Positioned.fill(
@@ -1190,11 +1346,14 @@ class _MapaUbicacion extends StatelessWidget {
                     options: MapOptions(
                       initialCenter: punto,
                       initialZoom: 16,
-                      interactionOptions: const InteractionOptions(flags: InteractiveFlag.none),
+                      interactionOptions: const InteractionOptions(
+                        flags: InteractiveFlag.none,
+                      ),
                     ),
                     children: [
                       TileLayer(
-                        urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        urlTemplate:
+                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                         userAgentPackageName: 'com.fulltech.crm',
                       ),
                       MarkerLayer(
@@ -1203,7 +1362,11 @@ class _MapaUbicacion extends StatelessWidget {
                             point: punto,
                             width: 40,
                             height: 40,
-                            child: Icon(Icons.location_on, size: 40, color: c.accent),
+                            child: Icon(
+                              Icons.location_on,
+                              size: 40,
+                              color: c.accent,
+                            ),
                           ),
                         ],
                       ),
@@ -1221,12 +1384,19 @@ class _MapaUbicacion extends StatelessWidget {
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [Colors.black.withValues(alpha: 0), Colors.black.withValues(alpha: 0.55)],
+                        colors: [
+                          Colors.black.withValues(alpha: 0),
+                          Colors.black.withValues(alpha: 0.55),
+                        ],
                       ),
                     ),
                     child: Row(
                       children: [
-                        Icon(Icons.place_outlined, size: 16, color: Colors.white.withValues(alpha: 0.9)),
+                        Icon(
+                          Icons.place_outlined,
+                          size: 16,
+                          color: Colors.white.withValues(alpha: 0.9),
+                        ),
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(
@@ -1269,7 +1439,10 @@ class _MapaUbicacion extends StatelessWidget {
                 TextButton.icon(
                   onPressed: () => onAbrir(),
                   icon: const Icon(Icons.open_in_new_rounded, size: 15),
-                  label: const Text('Abrir mapa', style: TextStyle(fontSize: 12)),
+                  label: const Text(
+                    'Abrir mapa',
+                    style: TextStyle(fontSize: 12),
+                  ),
                   style: TextButton.styleFrom(
                     foregroundColor: c.accent,
                     visualDensity: VisualDensity.compact,
@@ -1284,7 +1457,12 @@ class _MapaUbicacion extends StatelessWidget {
   }
 }
 
-class _SectionLabel extends StatelessWidget {  const _SectionLabel({required this.label, required this.count, required this.color});
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel({
+    required this.label,
+    required this.count,
+    required this.color,
+  });
 
   final String label;
   final int count;
@@ -1330,7 +1508,11 @@ class _SectionLabel extends StatelessWidget {  const _SectionLabel({required thi
 }
 
 class _DatoLinea extends StatelessWidget {
-  const _DatoLinea({required this.etiqueta, required this.valor, this.fuerte = false});
+  const _DatoLinea({
+    required this.etiqueta,
+    required this.valor,
+    this.fuerte = false,
+  });
 
   final String etiqueta;
   final String valor;
@@ -1416,7 +1598,11 @@ class _ErrorText extends StatelessWidget {
         child: Text(
           message,
           textAlign: TextAlign.center,
-          style: TextStyle(fontFamily: ChatDesktopMetrics.fontFamily, fontSize: 12.5, color: c.danger),
+          style: TextStyle(
+            fontFamily: ChatDesktopMetrics.fontFamily,
+            fontSize: 12.5,
+            color: c.danger,
+          ),
         ),
       ),
     );
