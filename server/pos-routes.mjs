@@ -250,6 +250,23 @@ export async function handlePosRoute({req,res,route,ctx,actor,json,readJson,can,
         supplierByLine.push({supplier,link,product});
       }
       const chosenStores=[...new Map(supplierByLine.filter(Boolean).map(row=>[row.supplier.id,row.supplier])).values()];
+      // El catálogo propio también puede salir de una tienda registrada. La
+      // selección viaja aparte porque sus líneas no tienen vínculo proveedor.
+      if(kind==='order'&&body.pickupStoreId){
+        const selected=await db.get('suppliers',String(body.pickupStoreId));
+        if(!selected||selected.active===false||selected.company_id!==companyId)
+          return send(422,{ok:false,error:'invalid_pickup_store',message:'La tienda de recogida no corresponde a este pedido.'});
+        if(chosenStores.length&&chosenStores[0].id!==selected.id)
+          return send(422,{ok:false,error:'pickup_store_mismatch',message:'La tienda elegida no coincide con la de los productos.'});
+        if(!chosenStores.length)chosenStores.push(selected);
+      }
+      if(kind==='order'&&body.guided===true&&body.needsDelivery===true&&input.deliveryMethod!=='pickup'){
+        if(chosenStores.length!==1)
+          return send(422,{ok:false,error:'pickup_store_required',message:'Selecciona una tienda de recogida para este reparto.'});
+        if(typeof chosenStores[0].lat!=='number'||!Number.isFinite(chosenStores[0].lat)||
+           typeof chosenStores[0].lng!=='number'||!Number.isFinite(chosenStores[0].lng))
+          return send(422,{ok:false,error:'pickup_location_required',message:'La tienda de recogida necesita coordenadas GPS.'});
+      }
       if(kind==='invoice'&&chosenStores.length)
         return send(409,{ok:false,error:'store_pickup_requires_open_order',message:'Los productos de tienda necesitan un pedido abierto para registrar la recogida y la entrega antes de cerrar la venta.'});
       let pickupSnapshot=chosenStores.length===1?{

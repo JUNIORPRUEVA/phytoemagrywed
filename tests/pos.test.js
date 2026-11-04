@@ -58,6 +58,25 @@ it('guardar pedido lo deja pendiente sin descontar stock',async()=>{
   expect(order).toMatchObject({status:'nuevo',payment_status:'pending',delivery:{address:'Calle 1',fee:50},notes:'Entregar por la tarde'});
   expect((await call('store/products')).data.movements).toHaveLength(0);
 });
+it('un pedido guiado exige GPS y conserva la tienda de recogida del catálogo propio',async()=>{
+  const store=(await call('suppliers',{company_id:'fulltech',name:'Origen de prueba',address:'Calle 18',lat:18.62,lng:-68.71})).data.supplier;
+  const input=body({mode:'order',items:[{variantId:p.id,quantity:1}],discount:{type:'none',value:0},expectedTotal:125050,
+    guided:true,needsDelivery:true,pickupStoreId:store.id,deliveryMethod:'delivery'});
+  const missing=await call('pos/checkout',input);
+  expect(missing.status).toBe(422);
+  expect(missing.data.error).toBe('missing_location');
+  const saved=await call('pos/checkout',{...input,requestId:randomUUID(),needsDelivery:false,
+    deliveryMethod:'pickup',address:'',acknowledgeOpen:true});
+  expect(saved.status).toBe(201);
+  const order=(await call(`orders/${saved.data.orderId}`)).data.order;
+  expect(order.delivery.pickup).toMatchObject({supplier_id:store.id,latitude:18.62,longitude:-68.71});
+  const edit=await fetch(`${app.url}/api/admin/orders/${saved.data.orderId}`,{
+    method:'PATCH',headers:{cookie,'content-type':'application/json'},
+    body:JSON.stringify({pickupStoreId:store.id,delivery:{method:'pickup'}}),
+  });
+  expect(edit.status).toBe(200);
+  expect((await edit.json()).order.delivery.pickup.supplier_id).toBe(store.id);
+});
 it('conserva la tienda elegida en la línea del pedido y valida el vínculo en servidor',async()=>{
   const product=(await call('store/products',{kind:'product',product_type:'third_party',track_stock:false,name:'Artículo externo',sku:'EXT-01',price:'100',cost:'50'})).data.product;
   const store=(await call('suppliers',{company_id:'fulltech',name:'Tienda de prueba',address:'Calle 12',lat:18.62,lng:-68.71,phone:'8095559999'})).data.supplier;

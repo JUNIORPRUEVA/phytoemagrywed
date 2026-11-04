@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app/crm_scope.dart';
@@ -141,6 +143,7 @@ class _PosScreenState extends State<PosScreen>
   List<Map<String, dynamic>> _pickupStores = const [];
   List<Map<String, dynamic>> _productStoreLinks = const [];
   String _selectedPickupStoreId = '';
+  Map<String, dynamic>? _selectedCourier;
   List<PosTicketSummary> _tickets = const [];
   int? _sharedCapsules;
   bool _catalogLoading = true;
@@ -841,7 +844,17 @@ class _PosScreenState extends State<PosScreen>
       },
     );
     if (selected != null && mounted) {
-      setState(() => _customer = selected);
+      setState(() {
+        if (_customer?.id != selected.id) {
+          _deliveryLocationId = '';
+          _deliveryLocation = null;
+          _deliveryQuoteId = '';
+          _address.clear();
+          _selectedCourier = null;
+          _operation.reset();
+        }
+        _customer = selected;
+      });
       await _loadOpenOrders(selected.id);
     }
   }
@@ -963,6 +976,13 @@ class _PosScreenState extends State<PosScreen>
       recentOrders: orders,
       onSelectCustomer: (customer) {
         setState(() {
+          if (_customer?.id != customer.id) {
+            _deliveryLocationId = '';
+            _deliveryLocation = null;
+            _deliveryQuoteId = '';
+            _address.clear();
+            _selectedCourier = null;
+          }
           _customer = customer;
           _activePanel = null;
         });
@@ -2105,10 +2125,17 @@ class _PosScreenState extends State<PosScreen>
         .map((line) => line.supplierId)
         .where((id) => id.isNotEmpty)
         .toSet();
-    if (stores.isEmpty) return null;
-    if (stores.length != 1)
+    if (stores.isEmpty && _selectedPickupStoreId.isEmpty) {
+      return 'Selecciona la tienda donde se recogerá el pedido.';
+    }
+    if (stores.length > 1) {
       return 'Los productos de varias tiendas necesitan repartos separados.';
-    final storeId = stores.single;
+    }
+    final storeId = stores.isEmpty ? _selectedPickupStoreId : stores.single;
+    if (_selectedPickupStoreId.isNotEmpty &&
+        _selectedPickupStoreId != storeId) {
+      return 'La tienda de recogida debe coincidir con la de los productos.';
+    }
     final location = _deliveryLocation;
     final latitude = numv(
       location?['latitude'] ?? location?['lat'],
@@ -2143,13 +2170,24 @@ class _PosScreenState extends State<PosScreen>
     final companyId = str(store?['company_id']);
     if (companyId.isEmpty)
       return 'La tienda de recogida necesita una empresa válida.';
-    final response = await CrmScope.of(context, listen: false).repository
-        .deliveryQuote({
-          'company_id': companyId,
-          'supplier_id': storeId,
-          'destination': {'latitude': latitude, 'longitude': longitude},
-          'destinationConfirmed': true,
-        });
+    Map<String, dynamic> response;
+    try {
+      response = await CrmScope.of(context, listen: false).repository
+          .deliveryQuote({
+            'company_id': companyId,
+            'supplier_id': storeId,
+            'destination': {'latitude': latitude, 'longitude': longitude},
+            'destinationConfirmed': true,
+          });
+    } on ApiException catch (error) {
+      if (error.code == 'delivery_policy_unconfigured') {
+        return 'Activa una tarifa para el cliente en Entregas > Reglas de entrega antes de asignar.';
+      }
+      if (error.code == 'routing_unconfigured') {
+        return 'El cálculo por carretera no está disponible. Configura el servicio de rutas.';
+      }
+      rethrow;
+    }
     final quote = mapv(response['quote']);
     final quoteId = str(quote['id']);
     final feeCents = numv(quote['fee_cents'], -1).toInt();
@@ -2170,7 +2208,7 @@ class _PosScreenState extends State<PosScreen>
   }
 
   Future<void> _submit() async {
-    if (widget.initialSale == null || _mode != 'order') {
+    if (_mode != 'order') {
       await _submitSale();
       return;
     }
@@ -2193,175 +2231,817 @@ class _PosScreenState extends State<PosScreen>
       posToast(context, 'Agrega al menos un artículo.');
       return null;
     }
-    final fee = TextEditingController(text: _deliveryFee.toStringAsFixed(0));
+    final repo = CrmScope.of(context, listen: false).repository;
+    final conversationId =
+        widget.initialSale?.conversationId ??
+        CrmScope.of(context, listen: false).conversations
+            .where((row) => row.customerId == _customer?.id)
+            .map((row) => row.id)
+            .firstOrNull ??
+        '';
+    var locations = <Map<String, dynamic>>[];
+    var couriers = <Map<String, dynamic>>[];
+    try {
+      final rows = await repo.customerLocations(_customer?.id ?? '');
+      if (!mounted) return null;
+      locations = rows
+          .where(
+            (row) =>
+                str(row['customer_id'], str(mapv(row['customer'])['id'])) ==
+                _customer?.id,
+          )
+          .toList();
+    } on ApiException catch (error) {
+      if (!mounted) return null;
+      posToast(context, error.message, tone: CrmToastTone.error);
+    }
+    try {
+      final rows = await repo.phytoCourierAccounts();
+      if (!mounted) return null;
+      couriers = rows
+          .where(
+            (row) =>
+                row['active'] == true &&
+                row['app_access'] == true &&
+                (str(row['kind']) == 'INTERNAL'
+                    ? str(row['user_id']).isNotEmpty
+                    : str(row['contact_id']).isNotEmpty &&
+                          str(row['phone']).isNotEmpty),
+          )
+          .toList();
+    } on ApiException catch (error) {
+      if (!mounted) return null;
+      posToast(context, error.message, tone: CrmToastTone.error);
+    }
+    bool validGps(Map<String, dynamic>? row) {
+      final lat = numv(row?['latitude'] ?? row?['lat'], double.nan).toDouble();
+      final lng = numv(row?['longitude'] ?? row?['lng'], double.nan).toDouble();
+      return lat.isFinite &&
+          lng.isFinite &&
+          lat.abs() <= 90 &&
+          lng.abs() <= 180;
+    }
+
+    void selectLocation(Map<String, dynamic> row) {
+      setState(() {
+        _deliveryLocation = row;
+        _deliveryLocationId = str(row['id']);
+        _address.text = str(
+          row['address'],
+          str(row['label'], str(row['name'])),
+        );
+        _deliveryQuoteId = '';
+      });
+      _operation.reset();
+    }
+
+    if (_deliveryLocationId.isEmpty && _deliveryMethod == 'delivery') {
+      final gps = locations.where(validGps).toList();
+      if (gps.isNotEmpty) selectLocation(gps.first);
+    }
+    Timer? locationTimer;
+    var requestingLocation = false;
+    var waitingForLocation = false;
+    var quoting = false;
+    String? inlineError;
+    var inlineIsError = false;
+    final locationIds = locations.map((row) => str(row['id'])).toSet();
     final result = await showDialog<String>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, update) => AlertDialog(
-          title: Text(
-            _editingOrderId.isEmpty
-                ? 'Revisar pedido'
-                : 'Editar ${str(_editingOrder['order_number'], 'pedido')}',
-          ),
-          content: SizedBox(
-            width: 520,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${_customer?.name ?? 'Cliente'} · ${_lines.length} artículos',
+        builder: (dialogContext, update) {
+          locationTimer ??= Timer.periodic(const Duration(seconds: 5), (
+            _,
+          ) async {
+            try {
+              final rows = await repo.customerLocations(_customer?.id ?? '');
+              if (!dialogContext.mounted || !mounted) return;
+              final own = rows
+                  .where(
+                    (row) =>
+                        str(
+                          row['customer_id'],
+                          str(mapv(row['customer'])['id']),
+                        ) ==
+                        _customer?.id,
+                  )
+                  .toList();
+              final incoming = own
+                  .where(
+                    (row) =>
+                        !locationIds.contains(str(row['id'])) && validGps(row),
+                  )
+                  .toList();
+              update(() {
+                locations = own;
+                locationIds.addAll(own.map((row) => str(row['id'])));
+                if (incoming.isNotEmpty &&
+                    (_deliveryLocationId.isEmpty || waitingForLocation)) {
+                  selectLocation(incoming.first);
+                  waitingForLocation = false;
+                  inlineError = 'Ubicación GPS recibida y agregada al pedido.';
+                  inlineIsError = false;
+                }
+              });
+            } on ApiException {
+              /* La lista conserva la última lectura. */
+            }
+          });
+          final storeIds = _lines
+              .map((line) => line.supplierId)
+              .where((id) => id.isNotEmpty)
+              .toSet();
+          final selectedStoreId = storeIds.length == 1
+              ? storeIds.single
+              : _selectedPickupStoreId;
+          final store = _pickupStores
+              .where((row) => str(row['id']) == selectedStoreId)
+              .firstOrNull;
+          final pickupGps = validGps(store);
+          final destinationGps =
+              validGps(_deliveryLocation) &&
+              locations.any((row) => str(row['id']) == _deliveryLocationId);
+          final needsDelivery = _deliveryMethod == 'delivery';
+          final quoteReady =
+              !needsDelivery ||
+              (_deliveryQuoteId.isNotEmpty &&
+                  _quotedStoreId == selectedStoreId &&
+                  _quotedLocationId == _deliveryLocationId &&
+                  (_deliveryQuoteExpiresAt?.isAfter(DateTime.now()) ?? false));
+          final canConfirm =
+              _customer != null &&
+              storeIds.length <= 1 &&
+              store != null &&
+              pickupGps &&
+              (!needsDelivery ||
+                  (destinationGps && quoteReady && _selectedCourier != null));
+          final scheme = Theme.of(dialogContext).colorScheme;
+          Widget sectionTitle(IconData icon, String title) => Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              children: [
+                Icon(icon, size: 18, color: scheme.primary),
+                const SizedBox(width: 7),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
                   ),
-                  const SizedBox(height: 8),
-                  for (final line in _lines)
+                ),
+              ],
+            ),
+          );
+          Widget columnCard(Widget child) => Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: scheme.surface,
+              border: Border.all(color: scheme.outlineVariant),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: child,
+          );
+          return Dialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: 970,
+                maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.85,
+              ),
+              child: SizedBox(
+                width: MediaQuery.sizeOf(dialogContext).width - 56,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                     Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 3),
+                      padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
                       child: Row(
                         children: [
+                          Icon(
+                            Icons.receipt_long_outlined,
+                            color: scheme.primary,
+                          ),
+                          const SizedBox(width: 10),
                           Expanded(
-                            child: Text(
-                              '${line.productName} × ${line.quantity}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _editingOrderId.isEmpty
+                                      ? 'Revisar pedido'
+                                      : 'Editar ${str(_editingOrder['order_number'], 'pedido')}',
+                                  style: const TextStyle(
+                                    fontSize: 19,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                Text(
+                                  '${_customer?.name ?? 'Cliente'} · ${_lines.length} artículos',
+                                  style: TextStyle(
+                                    color: scheme.onSurfaceVariant,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          Text(CrmFormat.money(line.netCents / 100)),
+                          IconButton(
+                            tooltip: 'Cerrar',
+                            onPressed: () => Navigator.pop(dialogContext),
+                            icon: const Icon(Icons.close),
+                          ),
                         ],
                       ),
                     ),
-                  const Divider(),
-                  Text(
-                    'Productos: ${CrmFormat.money(_draft.subtotalCents / 100)}',
-                  ),
-                  if (_draft.discountCents > 0)
-                    Text(
-                      'Descuento: −${CrmFormat.money(_draft.discountCents / 100)}',
-                    ),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<String>(
-                    initialValue: _deliveryMethod == 'pickup'
-                        ? 'pickup'
-                        : 'delivery',
-                    decoration: const InputDecoration(
-                      labelText: 'Modalidad de entrega',
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'delivery',
-                        child: Text('Delivery a domicilio'),
+                    Divider(height: 1, color: scheme.outlineVariant),
+                    Flexible(
+                      child: LayoutBuilder(
+                        builder: (context, box) {
+                          final twoColumns = box.maxWidth >= 700;
+                          final orderColumn = columnCard(
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                sectionTitle(
+                                  Icons.shopping_bag_outlined,
+                                  'Artículos y pago',
+                                ),
+                                for (final line in _lines)
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 4,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            '${line.productName} × ${line.quantity}',
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          CrmFormat.money(line.netCents / 100),
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                const Divider(height: 20),
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    const Text('Productos'),
+                                    Text(
+                                      CrmFormat.money(
+                                        _draft.subtotalCents / 100,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                if (_draft.discountCents > 0)
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      const Text('Descuento'),
+                                      Text(
+                                        '−${CrmFormat.money(_draft.discountCents / 100)}',
+                                      ),
+                                    ],
+                                  ),
+                                if (needsDelivery)
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      const Text('Delivery'),
+                                      Text(
+                                        quoteReady
+                                            ? CrmFormat.money(_deliveryFee)
+                                            : 'Por calcular',
+                                      ),
+                                    ],
+                                  ),
+                                const SizedBox(height: 12),
+                                DropdownButtonFormField<String>(
+                                  initialValue: _method == 'TRANSFER'
+                                      ? 'TRANSFER'
+                                      : 'CASH',
+                                  decoration: const InputDecoration(
+                                    labelText: 'Forma de pago',
+                                    isDense: true,
+                                  ),
+                                  items: const [
+                                    DropdownMenuItem(
+                                      value: 'CASH',
+                                      child: Text('Efectivo'),
+                                    ),
+                                    DropdownMenuItem(
+                                      value: 'TRANSFER',
+                                      child: Text('Transferencia'),
+                                    ),
+                                  ],
+                                  onChanged: (value) => update(
+                                    () => setState(
+                                      () => _method = value ?? 'CASH',
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                TextField(
+                                  controller: _notes,
+                                  maxLines: 2,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Notas',
+                                    isDense: true,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                          final deliveryColumn = columnCard(
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                sectionTitle(
+                                  Icons.route_outlined,
+                                  'Recogida y entrega',
+                                ),
+                                DropdownButtonFormField<String>(
+                                  initialValue: _deliveryMethod == 'pickup'
+                                      ? 'pickup'
+                                      : 'delivery',
+                                  decoration: const InputDecoration(
+                                    labelText: 'Modalidad',
+                                    isDense: true,
+                                  ),
+                                  items: const [
+                                    DropdownMenuItem(
+                                      value: 'delivery',
+                                      child: Text('Delivery a domicilio'),
+                                    ),
+                                    DropdownMenuItem(
+                                      value: 'pickup',
+                                      child: Text('Recoger en tienda'),
+                                    ),
+                                  ],
+                                  onChanged: (value) => update(
+                                    () => setState(() {
+                                      _deliveryMethod = value ?? 'delivery';
+                                      _deliveryQuoteId = '';
+                                      _operation.reset();
+                                      if (value == 'pickup') {
+                                        _deliveryFee = 0;
+                                        _selectedCourier = null;
+                                      }
+                                    }),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                DropdownButtonFormField<String>(
+                                  initialValue:
+                                      selectedStoreId.isEmpty ||
+                                          !_pickupStores.any(
+                                            (row) =>
+                                                str(row['id']) ==
+                                                selectedStoreId,
+                                          )
+                                      ? null
+                                      : selectedStoreId,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Tienda de recogida *',
+                                    isDense: true,
+                                    prefixIcon: Icon(Icons.storefront_outlined),
+                                  ),
+                                  items: [
+                                    for (final row in _pickupStores)
+                                      DropdownMenuItem(
+                                        value: str(row['id']),
+                                        child: Text(
+                                          str(row['name']),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                  ],
+                                  onChanged: storeIds.isNotEmpty
+                                      ? null
+                                      : (value) => update(
+                                          () => setState(() {
+                                            _selectedPickupStoreId =
+                                                value ?? '';
+                                            _deliveryQuoteId = '';
+                                            _operation.reset();
+                                          }),
+                                        ),
+                                ),
+                                if (_pickupStores.isEmpty)
+                                  Text(
+                                    'Registra una tienda de recogida con GPS en Entregas.',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: scheme.error,
+                                    ),
+                                  ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  store == null
+                                      ? 'Selecciona una tienda registrada.'
+                                      : pickupGps
+                                      ? str(
+                                          store['address'],
+                                          'GPS de recogida confirmado',
+                                        )
+                                      : 'Esta tienda necesita coordenadas GPS antes de asignar.',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: pickupGps
+                                        ? scheme.onSurfaceVariant
+                                        : scheme.error,
+                                  ),
+                                ),
+                                if (needsDelivery) ...[
+                                  const SizedBox(height: 12),
+                                  DropdownButtonFormField<String>(
+                                    initialValue:
+                                        destinationGps &&
+                                            locations.any(
+                                              (row) =>
+                                                  str(row['id']) ==
+                                                  _deliveryLocationId,
+                                            )
+                                        ? _deliveryLocationId
+                                        : null,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Ubicación GPS del cliente *',
+                                      isDense: true,
+                                      prefixIcon: Icon(Icons.home_outlined),
+                                    ),
+                                    items: [
+                                      for (final row in locations.where(
+                                        validGps,
+                                      ))
+                                        DropdownMenuItem(
+                                          value: str(row['id']),
+                                          child: Text(
+                                            str(
+                                              row['address'],
+                                              str(
+                                                row['label'],
+                                                'Ubicación compartida',
+                                              ),
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                    ],
+                                    onChanged: (value) {
+                                      final row = locations
+                                          .where(
+                                            (item) => str(item['id']) == value,
+                                          )
+                                          .firstOrNull;
+                                      if (row != null)
+                                        update(() => selectLocation(row));
+                                    },
+                                  ),
+                                  const SizedBox(height: 6),
+                                  if (!destinationGps)
+                                    Text(
+                                      'Falta la ubicación GPS. La dirección escrita no sustituye las coordenadas.',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: scheme.error,
+                                      ),
+                                    ),
+                                  if (destinationGps)
+                                    Text(
+                                      '${numv(_deliveryLocation?['latitude'] ?? _deliveryLocation?['lat']).toStringAsFixed(5)}, ${numv(_deliveryLocation?['longitude'] ?? _deliveryLocation?['lng']).toStringAsFixed(5)}',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: scheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: TextButton.icon(
+                                      onPressed:
+                                          requestingLocation ||
+                                              conversationId.isEmpty
+                                          ? null
+                                          : () async {
+                                              update(
+                                                () => requestingLocation = true,
+                                              );
+                                              try {
+                                                await repo.sendMessage(
+                                                  conversationId,
+                                                  'Por favor, envíanos tu ubicación para realizar la entrega de tu pedido.',
+                                                );
+                                                if (dialogContext.mounted)
+                                                  update(() {
+                                                    waitingForLocation = true;
+                                                    inlineError =
+                                                        'Solicitud enviada. La ubicación aparecerá aquí cuando el cliente la comparta.';
+                                                    inlineIsError = false;
+                                                  });
+                                              } on ApiException catch (error) {
+                                                if (dialogContext.mounted)
+                                                  update(() {
+                                                    inlineError = error.message;
+                                                    inlineIsError = true;
+                                                  });
+                                              } finally {
+                                                if (dialogContext.mounted)
+                                                  update(
+                                                    () => requestingLocation =
+                                                        false,
+                                                  );
+                                              }
+                                            },
+                                      icon: const Icon(
+                                        Icons.my_location_outlined,
+                                        size: 18,
+                                      ),
+                                      label: Text(
+                                        requestingLocation
+                                            ? 'Solicitando…'
+                                            : 'Pedir ubicación por WhatsApp',
+                                      ),
+                                    ),
+                                  ),
+                                  if (conversationId.isEmpty)
+                                    Text(
+                                      'Abre este pedido desde el chat para pedirle la ubicación al cliente.',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: scheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  TextField(
+                                    controller: _address,
+                                    readOnly: true,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Dirección de entrega',
+                                      isDense: true,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  TextField(
+                                    controller: _reference,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Referencia de entrega',
+                                      isDense: true,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  OutlinedButton.icon(
+                                    onPressed:
+                                        quoting || !pickupGps || !destinationGps
+                                        ? null
+                                        : () async {
+                                            update(() => quoting = true);
+                                            try {
+                                              final problem =
+                                                  await _ensureDeliveryQuote();
+                                              if (dialogContext.mounted)
+                                                update(() {
+                                                  inlineError = problem;
+                                                  inlineIsError =
+                                                      problem != null;
+                                                });
+                                            } on ApiException catch (error) {
+                                              if (dialogContext.mounted)
+                                                update(() {
+                                                  inlineError = error.message;
+                                                  inlineIsError = true;
+                                                });
+                                            } finally {
+                                              if (dialogContext.mounted)
+                                                update(() => quoting = false);
+                                            }
+                                          },
+                                    icon: const Icon(
+                                      Icons.calculate_outlined,
+                                      size: 18,
+                                    ),
+                                    label: Text(
+                                      quoting
+                                          ? 'Calculando…'
+                                          : quoteReady
+                                          ? 'Actualizar tarifa de delivery'
+                                          : 'Calcular delivery',
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  DropdownButtonFormField<String>(
+                                    initialValue:
+                                        couriers.any(
+                                          (row) =>
+                                              str(row['id']) ==
+                                              str(_selectedCourier?['id']),
+                                        )
+                                        ? str(_selectedCourier?['id'])
+                                        : null,
+                                    decoration: const InputDecoration(
+                                      labelText:
+                                          'Repartidor de FULLTECH Delivery *',
+                                      isDense: true,
+                                      prefixIcon: Icon(
+                                        Icons.delivery_dining_outlined,
+                                      ),
+                                    ),
+                                    items: [
+                                      for (final row in couriers)
+                                        DropdownMenuItem(
+                                          value: str(row['id']),
+                                          child: Text(
+                                            str(
+                                              row['display_name'],
+                                              'Repartidor',
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                    ],
+                                    onChanged: (value) => update(
+                                      () => setState(
+                                        () => _selectedCourier = couriers
+                                            .where(
+                                              (row) => str(row['id']) == value,
+                                            )
+                                            .firstOrNull,
+                                      ),
+                                    ),
+                                  ),
+                                  if (couriers.isEmpty)
+                                    Text(
+                                      'No hay repartidores con acceso activo a FULLTECH Delivery.',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: scheme.error,
+                                      ),
+                                    ),
+                                ],
+                              ],
+                            ),
+                          );
+                          final children = [orderColumn, deliveryColumn];
+                          return SingleChildScrollView(
+                            padding: const EdgeInsets.all(16),
+                            child: twoColumns
+                                ? Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(child: children[0]),
+                                      const SizedBox(width: 14),
+                                      Expanded(child: children[1]),
+                                    ],
+                                  )
+                                : Column(
+                                    children: [
+                                      children[0],
+                                      const SizedBox(height: 12),
+                                      children[1],
+                                    ],
+                                  ),
+                          );
+                        },
                       ),
-                      DropdownMenuItem(
-                        value: 'pickup',
-                        child: Text('Recoger en tienda'),
+                    ),
+                    if (inlineError != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            inlineError!,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: inlineIsError
+                                  ? scheme.error
+                                  : scheme.primary,
+                            ),
+                          ),
+                        ),
                       ),
-                    ],
-                    onChanged: (value) => update(() {
-                      setState(() => _deliveryMethod = value ?? 'delivery');
-                      if (value == 'pickup') {
-                        fee.text = '0';
-                        setState(() {
-                          _deliveryFee = 0;
-                          _deliveryQuoteId = '';
-                        });
-                      }
-                    }),
-                  ),
-                  TextField(
-                    controller: _address,
-                    decoration: const InputDecoration(
-                      labelText: 'Dirección de entrega',
-                    ),
-                  ),
-                  TextField(
-                    controller: _reference,
-                    decoration: const InputDecoration(labelText: 'Referencia'),
-                  ),
-                  TextField(
-                    controller: fee,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: const InputDecoration(
-                      labelText: 'Delivery · RD\$',
-                    ),
-                    onChanged: (value) => update(() {
-                      setState(
-                        () => _deliveryFee =
-                            (double.tryParse(value.replaceAll(',', '.')) ?? 0)
-                                .roundToDouble(),
-                      );
-                    }),
-                  ),
-                  DropdownButtonFormField<String>(
-                    initialValue: _method == 'TRANSFER' ? 'TRANSFER' : 'CASH',
-                    decoration: const InputDecoration(
-                      labelText: 'Forma de pago',
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 'CASH', child: Text('Efectivo')),
-                      DropdownMenuItem(
-                        value: 'TRANSFER',
-                        child: Text('Transferencia'),
+                    Divider(height: 1, color: scheme.outlineVariant),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 10, 18, 12),
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              const Text(
+                                'Total del cliente',
+                                style: TextStyle(fontWeight: FontWeight.w700),
+                              ),
+                              const Spacer(),
+                              Text(
+                                quoteReady
+                                    ? CrmFormat.money(
+                                        _draft.expectedTotalCents / 100,
+                                      )
+                                    : 'Pendiente de cotizar',
+                                style: TextStyle(
+                                  fontSize: 19,
+                                  fontWeight: FontWeight.w800,
+                                  color: scheme.primary,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(dialogContext),
+                                child: const Text('Volver'),
+                              ),
+                              if (_editingOrderId.isEmpty)
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.pop(dialogContext, 'draft'),
+                                  child: const Text('Guardar borrador'),
+                                ),
+                              const Spacer(),
+                              TextButton(
+                                onPressed: canConfirm
+                                    ? () => Navigator.pop(dialogContext, 'chat')
+                                    : null,
+                                child: const Text('Confirmar y volver al chat'),
+                              ),
+                              const SizedBox(width: 6),
+                              FilledButton(
+                                onPressed: canConfirm
+                                    ? () => Navigator.pop(dialogContext, 'save')
+                                    : null,
+                                child: Text(
+                                  _editingOrderId.isEmpty
+                                      ? 'Crear y asignar pedido'
+                                      : 'Guardar y asignar',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
-                    ],
-                    onChanged: (value) =>
-                        update(() => setState(() => _method = value ?? 'CASH')),
-                  ),
-                  TextField(
-                    controller: _notes,
-                    maxLines: 2,
-                    decoration: const InputDecoration(labelText: 'Notas'),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Total del cliente: ${CrmFormat.money(_draft.expectedTotalCents / 100)}',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 17,
                     ),
-                  ),
-                  const Text(
-                    'La remuneración del repartidor se liquida por separado al finalizar la entrega.',
-                    style: TextStyle(fontSize: 11.5),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Volver al editor'),
-            ),
-            if (_editingOrderId.isEmpty)
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, 'draft'),
-                child: const Text('Guardar borrador y volver'),
-              ),
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, 'chat'),
-              child: Text(
-                _editingOrderId.isEmpty
-                    ? 'Crear y volver al chat'
-                    : 'Guardar y volver al chat',
-              ),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, 'save'),
-              child: Text(
-                _editingOrderId.isEmpty ? 'Crear pedido' : 'Guardar cambios',
-              ),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
-    fee.dispose();
+    locationTimer?.cancel();
     return result;
   }
 
+  Future<String?> _assignSelectedCourier(String orderId) async {
+    if (_deliveryMethod != 'delivery') return null;
+    final courier = _selectedCourier;
+    if (courier == null) return 'No se eligió un repartidor.';
+    if (orderId.isEmpty) return 'El servidor no devolvió el número del pedido.';
+    final repo = CrmScope.of(context, listen: false).repository;
+    try {
+      if (str(courier['kind']) == 'INTERNAL') {
+        final userId = str(courier['user_id']);
+        if (userId.isEmpty) return 'El repartidor no tiene usuario vinculado.';
+        await repo.assignDelivery(orderId, deliveryUserId: userId);
+      } else {
+        final phone = str(courier['phone']);
+        if (phone.isEmpty || str(courier['contact_id']).isEmpty) {
+          return 'El repartidor no tiene contacto vinculado.';
+        }
+        await repo.assignExternalCourier(orderId, contactPhone: phone);
+      }
+      return null;
+    } on ApiException catch (error) {
+      return error.message;
+    }
+  }
+
   Future<void> _saveExistingOrder({required bool returnToChat}) async {
+    if (_deliveryMethod == 'delivery' &&
+        (_deliveryLocationId.isEmpty ||
+            _deliveryQuoteId.isEmpty ||
+            _selectedCourier == null)) {
+      posToast(context, 'Confirma GPS, tarifa y repartidor antes de guardar.');
+      return;
+    }
     final problem = _draft.validate();
     if (problem != null &&
         !(problem == 'Escribe la dirección de entrega.' &&
@@ -2381,6 +3061,13 @@ class _PosScreenState extends State<PosScreen>
             deliveryFee: _deliveryFee,
             notes: _notes.text.trim(),
             paymentMethod: _method,
+            deliveryLocationId: _deliveryMethod == 'delivery'
+                ? _deliveryLocationId
+                : null,
+            deliveryQuoteId: _deliveryMethod == 'delivery'
+                ? _deliveryQuoteId
+                : null,
+            pickupStoreId: _selectedPickupStoreId,
             delivery: {
               'method': _deliveryMethod,
               'address': _address.text.trim(),
@@ -2390,12 +3077,15 @@ class _PosScreenState extends State<PosScreen>
           );
       if (!mounted) return;
       final order = mapv(response['order']);
+      final courierProblem = await _assignSelectedCourier(orderId);
       final serverTotal = numv(order['total']).toDouble();
       setState(() => _editingOrder = order);
       CrmScope.of(context, listen: false).refresh(quiet: true);
       posToast(
         context,
-        'Pedido actualizado · total ${CrmFormat.money(serverTotal)}.',
+        courierProblem == null
+            ? 'Pedido actualizado y asignado · total ${CrmFormat.money(serverTotal)}.'
+            : 'Pedido actualizado, pero no se asignó: $courierProblem',
       );
       if (returnToChat) _returnToConversation();
     } on ApiException catch (error) {
@@ -2451,6 +3141,13 @@ class _PosScreenState extends State<PosScreen>
       final body = draft.isQuote
           ? draft.toQuoteBody(requestId: requestId)
           : draft.toCheckoutBody(requestId: requestId);
+      if (draft.mode == 'order') {
+        body['guided'] = true;
+        body['needsDelivery'] = _deliveryMethod == 'delivery';
+        if (_selectedPickupStoreId.isNotEmpty) {
+          body['pickupStoreId'] = _selectedPickupStoreId;
+        }
+      }
       if (_deliveryQuoteId.isNotEmpty && _deliveryLocation != null) {
         body['location'] = {
           'latitude': numv(
@@ -2467,12 +3164,17 @@ class _PosScreenState extends State<PosScreen>
           ? await repo.posQuote(body, operationKey: requestId)
           : await repo.posCheckout(body, operationKey: requestId);
       if (!mounted) return;
+      final courierProblem =
+          draft.mode == 'order' && _deliveryMethod == 'delivery'
+          ? await _assignSelectedCourier(str(result['orderId']))
+          : null;
       await _onSuccess(
         scope,
         PosOutcome.fromResponse(result),
         draft,
         requestId,
         result,
+        courierProblem: courierProblem,
       );
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -2491,8 +3193,9 @@ class _PosScreenState extends State<PosScreen>
     PosOutcome outcome,
     PosSaleDraft draft,
     String requestId,
-    Map<String, dynamic> response,
-  ) async {
+    Map<String, dynamic> response, {
+    String? courierProblem,
+  }) async {
     final total = numv(
       response['total_cents'],
       outcome.totalCents ?? draft.expectedTotalCents,
@@ -2531,6 +3234,8 @@ class _PosScreenState extends State<PosScreen>
       _ticketVersion = 0;
       _quoteId = '';
       _openOrders = const [];
+      _selectedCourier = null;
+      _selectedPickupStoreId = '';
     });
     if (!mounted) return;
     await showDialog<void>(
@@ -2549,6 +3254,8 @@ class _PosScreenState extends State<PosScreen>
               'El servidor ya tenía esta operación: no se ha duplicado nada.',
             if (draft.isQuote)
               'Se puede enviar al cliente por WhatsApp desde Cotizaciones.',
+            if (courierProblem != null)
+              'El pedido se creó, pero falta asignarlo: $courierProblem',
           ].join('\n'),
         ),
         actions: [

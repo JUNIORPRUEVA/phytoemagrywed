@@ -573,6 +573,8 @@ class CrmRepository {
     double? deliveryFee,
     String? notes,
     String? deliveryLocationId,
+    String? deliveryQuoteId,
+    String? pickupStoreId,
     String? paymentMethod,
     Map<String, dynamic>? delivery,
     String? operationKey,
@@ -583,8 +585,9 @@ class CrmRepository {
     'notes': ?notes,
     'paymentMethod': ?paymentMethod,
     'delivery': ?delivery,
-    if (deliveryLocationId != null)
-      'deliveryLocation': {'id': deliveryLocationId},
+    if (deliveryLocationId != null) 'deliveryLocation': deliveryLocationId,
+    if (deliveryQuoteId != null) 'deliveryQuoteId': deliveryQuoteId,
+    if (pickupStoreId != null) 'pickupStoreId': pickupStoreId,
   }, operationKey: operationKey);
 
   /// Cancelar una VENTA ENTREGADA (`sales.cancel`): restaura inventario, anula el
@@ -1407,4 +1410,14 @@ class CrmRepository {
     '/api/admin/orders/${Uri.encodeComponent(orderId)}/store-contact',
     {'message': message, 'idempotencyKey': idempotencyKey},
   );
+
+  /// Historial completo del cliente, para capturar su GPS compartido en el chat.
+  Future<List<Map<String, dynamic>>> customerLocations(
+    String customerId,
+  ) async {
+    final data = await _api.get(
+      '/api/admin/customers/${Uri.encodeComponent(customerId)}/locations',
+    );
+    return listv(data['locations']).map(mapv).toList();
+  }
 }

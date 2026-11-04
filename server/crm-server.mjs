@@ -12817,6 +12817,41 @@ async function handle(req, res, ctx) {
         json(res, 422, { ok: false, error: entrega.code, message: entrega.message });
         return;
       }
+      let verifiedPickup = null;
+      let verifiedQuote = null;
+      if (body.pickupStoreId || body.deliveryQuoteId) {
+        const supplierId = String(body.pickupStoreId ?? current.delivery?.pickup?.supplier_id ?? '');
+        const supplier = supplierId ? await ctx.db.get('suppliers', supplierId) : null;
+        const lineStores = pickupStoreIds(current.items);
+        if (!supplier || supplier.active === false || supplier.company_id !== companyOfOrder(current) ||
+            (lineStores.length && (lineStores.length !== 1 || lineStores[0] !== supplierId)) ||
+            typeof supplier.lat !== 'number' || !Number.isFinite(supplier.lat) ||
+            typeof supplier.lng !== 'number' || !Number.isFinite(supplier.lng)) {
+          json(res, 422, { ok: false, error: 'invalid_pickup_store', message: 'La tienda de recogida necesita GPS y debe corresponder al pedido.' });
+          return;
+        }
+        verifiedPickup = { supplier_id: supplier.id, name: supplier.name, address: supplier.address,
+          reference: supplier.references || '', latitude: Number(supplier.lat), longitude: Number(supplier.lng),
+          confirmed_at: ctx.clock().toISOString() };
+        if (body.deliveryQuoteId) {
+          const quote = await ctx.db.get('delivery_quotes', String(body.deliveryQuoteId));
+          const policy = quote?.policy_id ? await ctx.db.get('delivery_customer_policies', quote.policy_id) : null;
+          const destination = entrega.location ?? current.delivery?.location;
+          if (!quote || !policy || policy.updated_at !== quote.policy_updated_at ||
+              quote.supplier_id !== supplierId || quote.company_id !== supplier.company_id ||
+              Date.parse(quote.expires_at) < ctx.clock().getTime() ||
+              !destination || Math.abs(Number(destination.latitude ?? destination.lat) - quote.destination.latitude) > 1e-6 ||
+              Math.abs(Number(destination.longitude ?? destination.lng) - quote.destination.longitude) > 1e-6 ||
+              Math.round(Number(body.deliveryFee) * 100) !== quote.fee_cents) {
+            json(res, 409, { ok: false, error: 'delivery_quote_changed', message: 'La cotización del delivery cambió. Calcula de nuevo antes de guardar.' });
+            return;
+          }
+          verifiedPickup = quote.pickup;
+          verifiedQuote = { quote_id: quote.id, fee_cents: quote.fee_cents, route: quote.route,
+            policy_id: quote.policy_id, policy_updated_at: quote.policy_updated_at,
+            destination: quote.destination, pickup: quote.pickup };
+        }
+      }
       if (
         entrega.provided &&
         (current.delivery?.delivery_status === DELIVERY_OPERATIONAL_STATUSES.IN_TRANSIT || (await activeTrackingSessionsForOrder(ctx, orderId)).length)
@@ -12868,6 +12903,8 @@ async function handle(req, res, ctx) {
           fee: totals.deliveryFee,
           // GPS: se manda la elegida o se conserva la suya (nunca se borra sola).
           location: entrega.provided ? entrega.location : current.delivery?.location ?? null,
+          ...(verifiedPickup ? { pickup: verifiedPickup } : {}),
+          ...(verifiedQuote ? { customer_quote_snapshot: verifiedQuote, route: verifiedQuote.route } : {}),
         },
         payment_method: nextPaymentMethod,
         payment_method_label: paymentMethodLabel(nextPaymentMethod),
